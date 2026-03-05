@@ -155,9 +155,12 @@ class ESPCalExperiment:
         elapsed = time.time() - t0
         print(f"  ✓ Done in {elapsed:.1f}s ({len(df)/elapsed:.1f} s/s)")
 
-        calibration_cols = [c for c in ["signal_esp", "signal_h_drop", "signal_loss",
+        calibration_cols = [c for c in [
+                            "signal_minkpp", "signal_mink", "signal_zlib",
+                            "signal_esp", "signal_h_drop", "signal_loss",
                             "signal_surprise_drop", "surprise_drop",
-                            "neg_mean_loss", "minkprob_20", "surp"] if c in df.columns]
+                            "neg_mean_loss", "minkpp_20", "minkprob_20",
+                            "zlib_ratio", "surp"] if c in df.columns]
 
         if calibrate:
             calibrator = MultiScaleCalibrator(self.cfg)

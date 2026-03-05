@@ -114,22 +114,40 @@ class ESPExtractor:
         median_loss = np.median(token_loss)
         settle_frac = float((token_loss[mid:] < median_loss).mean()) if mid < n_tokens else 0.5
 
-        # 6. MinK% Prob
+        # 6. Min-K% (Shi et al., 2024) — bottom k% token log-probs
         k = max(1, int(n_tokens * 0.2))
-        sorted_lp = np.sort(token_lp.cpu().numpy())
-        minkprob = sorted_lp[:k].mean()
+        token_lp_np = token_lp.cpu().numpy()
+        sorted_lp = np.sort(token_lp_np)
+        minkprob = sorted_lp[:k].mean()  # Min-K%, k=20%
 
-        # 7. Rank features
+        # 7. ★ Min-K%++ (Zhang et al., 2024, ICLR 2025) — z-score normalization
+        #    mu_t   = E_{z~p(·|x<t)}[log p(z|x<t)]   (vocab-level mean log-prob)
+        #    sigma_t = sqrt(Var_{z}[log p(z|x<t)])     (vocab-level std)
+        #    score_t = (log p(xt|x<t) - mu_t) / sigma_t  (z-score of true token)
+        #    Final  = mean of bottom k% scores
+        mu_vocab = (probs * log_probs).sum(dim=-1).squeeze(0)          # [n_tok]
+        sigma_sq = (probs * log_probs.pow(2)).sum(dim=-1).squeeze(0) \
+                   - mu_vocab.pow(2)                                    # Var[log p]
+        minkpp_per_token = (token_lp - mu_vocab) / sigma_sq.clamp(min=1e-20).sqrt()
+        minkpp_np = minkpp_per_token.cpu().numpy()
+        # bottom k%, same strategy as paper
+        minkpp_20  = float(np.sort(minkpp_np)[:max(1, int(n_tokens * 0.2))].mean())
+        minkpp_10  = float(np.sort(minkpp_np)[:max(1, int(n_tokens * 0.1))].mean())
+        minkpp_50  = float(np.sort(minkpp_np)[:max(1, int(n_tokens * 0.5))].mean())
+
+        # 8. Rank features
         ranks = (shift_logits.squeeze(0).argsort(dim=-1, descending=True)
                  .argsort(dim=-1).gather(1, shift_labels.squeeze(0).unsqueeze(1))
                  .squeeze(1).float().cpu().numpy())
         mean_rank = ranks.mean()
         median_rank = np.median(ranks)
 
-        # 8. Composite
+        # 9. Composite / baselines
         surp = mean_loss - loss_std
         zlib_len = len(zlib.compress(text.encode("utf-8")))
-        zlib_ratio = mean_loss / (zlib_len / n_tokens) if zlib_len > 0 else 0.0
+        # Zlib formula matching reference (Zhang et al.): ll / zlib_len = -mean_loss / zlib_len
+        # Higher = more likely training (low loss, small zlib ratio)
+        zlib_ratio = (-mean_loss) / zlib_len if zlib_len > 0 else 0.0
 
         features = {
             # Entropy features
@@ -138,23 +156,32 @@ class ESPExtractor:
             "h_mean": h_mean, "h_std": h_std, "h_drop": h_drop, "h_curvature": h_curvature,
             # Loss features
             "neg_mean_loss": -mean_loss, "loss_slope": loss_slope, "loss_std": loss_std,
-            # ★ Surprise trajectory features
+            # Surprise trajectory features
             "surprise_drop": surprise_drop,
             "surprise_accel": surprise_accel,
             "neg_surprise_vol": -surprise_volatility,
             "neg_loss_q_range": -loss_q_range,
             "max_loss_drop": max_loss_drop,
             "settle_frac": settle_frac,
-            # Baselines
-            "minkprob_20": minkprob, "surp": -surp,
+            # Min-K% (Shi et al., 2024)
+            "minkprob_20": minkprob,
+            # ★ Min-K%++ (Zhang et al., ICLR 2025) — z-score normalized
+            "minkpp_20": minkpp_20,
+            "minkpp_10": minkpp_10,
+            "minkpp_50": minkpp_50,
+            # Other baselines
+            "surp": -surp,
             "neg_mean_rank": -mean_rank, "neg_median_rank": -median_rank,
             "zlib_ratio": zlib_ratio,
             # Meta
             "seq_len": seq_len, "n_tokens": n_tokens,
             # Primary signals (higher → more likely member)
+            "signal_minkpp": minkpp_20,        # ★ main signal (Min-K%++)
+            "signal_mink": minkprob,           # Min-K% baseline
             "signal_esp": -esp_slope,
             "signal_h_drop": h_drop,
             "signal_loss": -mean_loss,
+            "signal_zlib": zlib_ratio,
             "signal_surprise_drop": surprise_drop,
         }
 
@@ -168,8 +195,11 @@ class ESPExtractor:
                 "neg_mean_loss", "loss_slope", "loss_std",
                 "surprise_drop", "surprise_accel", "neg_surprise_vol",
                 "neg_loss_q_range", "max_loss_drop", "settle_frac",
-                "minkprob_20", "surp", "neg_mean_rank", "neg_median_rank",
+                "minkprob_20",
+                "minkpp_20", "minkpp_10", "minkpp_50",
+                "surp", "neg_mean_rank", "neg_median_rank",
                 "zlib_ratio", "seq_len", "n_tokens",
-                "signal_esp", "signal_h_drop", "signal_loss",
+                "signal_minkpp", "signal_mink",
+                "signal_esp", "signal_h_drop", "signal_loss", "signal_zlib",
                 "signal_surprise_drop"]
         return {k: np.nan for k in keys}
