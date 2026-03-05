@@ -64,3 +64,5 @@ _tmp_*.py
 
 # Jupyter
 .ipynb_checkpoints/
+
+reference_minkpp/
