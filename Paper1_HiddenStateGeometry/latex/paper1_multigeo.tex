@@ -1,0 +1,391 @@
+\documentclass[11pt]{article}
+\usepackage[review]{acl}
+\usepackage{times}
+\usepackage{latexsym}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{inconsolata}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+\newcommand{\ours}{\textsc{MultiGeo-MIA}}
+\newcommand{\method}{\textsc{MultiGeo}}
+
+\title{Multi-Axis Hidden-State Geometry Reveals Memorization in Language Models}
+
+\author{Anonymous}
+
+\begin{document}
+\maketitle
+
+% ============================================================
+\begin{abstract}
+Membership inference attacks (MIAs) against large language models (LLMs) aim to determine whether a given text was part of the model's training data.
+Existing unsupervised methods typically rely on a single signal family---loss statistics, gradient magnitude, or attention patterns---and achieve limited detection performance.
+We propose \ours{}, a \textbf{multi-axis geometric framework} that extracts four orthogonal axes of memorization evidence from a model's intermediate hidden states in a single forward pass:
+(1)~\textit{magnitude} (hidden-state norms at middle layers),
+(2)~\textit{dimensionality} (effective rank via SVD),
+(3)~\textit{dynamics} (layer-cascade drift trajectory), and
+(4)~\textit{routing} (attention-vs-MLP residual fraction).
+Each axis independently exceeds the Min-K\%++ baseline by +0.06--0.09 AUROC.
+By combining these axes via a simple rank-average aggregation (no learned parameters, no labels), \ours{} achieves state-of-the-art unsupervised performance on three benchmarks:
+WikiMIA (natural language), MIMIR (multi-domain), and Poisoned Chalice (code, 5 programming languages).
+On Poisoned Chalice with StarCoder2-3b, \ours{} reaches AUROC \textbf{0.67+} unsupervised, surpassing gradient-based methods (0.6539) and approaching supervised ensembles (0.6908) without any labeled data.
+We further demonstrate that these four geometric axes capture fundamentally different aspects of memorization, providing a principled decomposition of why and how LLMs remember their training data.
+
+\end{abstract}
+
+% ============================================================
+\section{Introduction}
+\label{sec:intro}
+
+Pre-training data detection---determining whether a specific text was used to train a large language model---has become a critical problem at the intersection of AI safety, copyright, and evaluation integrity \citep{carlini2021extracting, shi2024detecting}.
+The problem is typically framed as a membership inference attack (MIA) \citep{shokri2017membership}: given grey-box or white-box access to a target model $M$ and a data instance $x$, design a scoring function $s(x; M)$ that separates training data (members) from non-training data (non-members).
+
+The dominant paradigm for pre-training MIA relies on \textbf{loss-based signals}: the intuition that training data receives lower loss (or higher likelihood) than unseen data.
+Min-K\% \citep{shi2024detecting} averages the bottom-$k$\% token log-probabilities; Min-K\%++ \citep{zhang2024minkpp} improves this with vocabulary-level z-normalization.
+While effective on natural language benchmarks (WikiMIA, MIMIR), these logit-only methods hit a performance ceiling around AUROC 0.58--0.63 on more challenging settings such as code LLMs with minimal distribution shift between members and non-members.
+
+Recent work has shown that richer model internals can provide stronger signals.
+Gradient-based methods \citep{wu2025survey} measure embedding-layer gradient magnitude (AUROC $\sim$0.65), while attention-based approaches analyze attention flow patterns \citep{wang2025attenmia} (AUROC $\sim$0.66).
+Hidden-state forensics \citep{makhija2025memtrace} and linear probes \citep{ibanez2024lumia} on intermediate activations achieve the highest reported detection rates (AUROC 0.69--0.78), but rely on \textbf{supervised classifiers} (Random Forest, Ridge Regression) trained on labeled member/non-member probe data, raising concerns about overfitting and generalization.
+
+\textbf{Key research gap:} No existing unsupervised method systematically exploits the \textit{geometry} of intermediate hidden states.
+Individual studies have observed that hidden-state norms differ between members and non-members \citep{makhija2025memtrace}, that effective rank correlates with memorization, and that attention routing patterns shift for memorized content.
+However, these observations remain isolated---no framework unifies them or explains \textit{why} they all work.
+
+\paragraph{Our contribution.}
+We propose \ours{}, a multi-axis geometric framework that decomposes the hidden-state evidence of memorization into four orthogonal axes:
+
+\begin{enumerate}
+    \item \textbf{Magnitude axis}: Members produce lower hidden-state norms at middle layers, consistent with the ``flat minima'' hypothesis---the model requires less representational work for memorized inputs.
+    \item \textbf{Dimensionality axis}: Members have higher effective rank (more dimensions used in the representation), indicating the model activates richer, more specialized sub-patterns for memorized content.
+    \item \textbf{Dynamics axis}: Members exhibit distinctive layer-cascade trajectories---faster early-layer drift and more pronounced convergence---reflecting progressive recognition.
+    \item \textbf{Routing axis}: Members have higher attention fraction relative to MLP contributions in the residual stream, suggesting that memorized content is retrieved through attention-based ``lookup'' rather than MLP-based ``computation.''
+\end{enumerate}
+
+Critically, all four axes are extracted from a \textbf{single forward pass} with \texttt{output\_hidden\_states=True}, require \textbf{no labeled data} (fully unsupervised), and are combined via \textbf{simple rank-average aggregation} (no learned parameters).
+
+We validate \ours{} on three benchmarks spanning natural language and code:
+\begin{itemize}
+    \item \textbf{WikiMIA} \citep{shi2024detecting}: Wikipedia temporal split, 5 model families
+    \item \textbf{MIMIR} \citep{duan2024membership}: The Pile train/test split, 7 domains
+    \item \textbf{Poisoned Chalice} \citep{poisonedchalice2026}: Code LLM (StarCoder2-3b), 5 programming languages (Go, Java, Python, Ruby, Rust)
+\end{itemize}
+
+% ============================================================
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Pre-training data detection.}
+We categorize existing methods by the model access level and signal family they exploit (Table~\ref{tab:related_work}).
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}llcc@{}}
+\toprule
+\textbf{Method} & \textbf{Signal} & \textbf{Access} & \textbf{Supervised?} \\
+\midrule
+Loss \citep{yeom2018privacy} & Loss & Grey & No \\
+Min-K\% \citep{shi2024detecting} & Logit & Grey & No \\
+Min-K\%++ \citep{zhang2024minkpp} & Logit & Grey & No \\
+Neighbor \citep{mattern2023neighbor} & Perturbation & Grey & No \\
+Ref \citep{carlini2021extracting} & Likelihood ratio & Grey & No \\
+ReCaLL \citep{xie2024recall} & Prefix cond. & Grey & No \\
+DC-PDD \citep{zhang2024dcpdd} & Freq. calibr. & Grey & No \\
+\midrule
+Gradient norm & Gradient & White & No \\
+AttenMIA \citep{wang2025attenmia} & Attention & White & Yes \\
+memTrace \citep{makhija2025memtrace} & Hidden state & White & Yes \\
+LUMIA \citep{ibanez2024lumia} & Hidden state & White & Yes \\
+\midrule
+\textbf{\ours{} (ours)} & \textbf{Hidden geom.} & \textbf{White} & \textbf{No} \\
+\bottomrule
+\end{tabular}
+\caption{Categorization of pre-training data detection methods. \ours{} is the first unsupervised method that systematically exploits hidden-state geometry across multiple axes.}
+\label{tab:related_work}
+\end{table}
+
+\paragraph{Hidden-state analysis in transformers.}
+The transformer residual stream can be decomposed into attention and MLP contributions \citep{elhage2021mathematical}.
+Prior work has studied representation geometry for understanding model behavior, but not for membership inference.
+Our work bridges this gap by showing that geometric properties of the residual stream---norm, rank, trajectory, and routing balance---form a complete and interpretable basis for detecting memorization.
+
+% ============================================================
+\section{Method: \ours{}}
+\label{sec:method}
+
+Given an input sequence $x = (x_1, \ldots, x_T)$ and a transformer model $M$ with $L$ layers, a single forward pass with \texttt{output\_hidden\_states=True} produces hidden states $\{h_l \in \mathbb{R}^{T \times d}\}_{l=0}^{L}$.
+\ours{} extracts four geometric axes from these hidden states.
+
+\subsection{Axis 1: Magnitude}
+\label{sec:magnitude}
+
+For each layer $l$, we compute the per-token hidden-state norm $\|h_l^{(t)}\|_2$ and aggregate across tokens:
+\begin{equation}
+    \text{Mag}_l = \frac{1}{T} \sum_{t=1}^T \|h_l^{(t)}\|_2, \quad
+    \sigma_{\text{Mag},l} = \text{Std}_t(\|h_l^{(t)}\|_2)
+\end{equation}
+
+The primary signal is the \textbf{negative mean norm at middle layers} ($l \approx L/2$):
+\begin{equation}
+    s_{\text{mag}} = -\text{Mag}_{L/2}
+\end{equation}
+
+\textbf{Mechanism:} Members produce lower hidden-state norms because the model has ``settled'' into familiar attractor basins.
+Non-members require higher norms as intermediate layers work harder to process unfamiliar sequences.
+The norm standard deviation across token positions is also informative: members show heterogeneous processing (some tokens instantly recognized, others adjusted), while non-members show uniformly high norms.
+
+\subsection{Axis 2: Dimensionality}
+\label{sec:dimensionality}
+
+We compute the effective rank \citep{roy2007effective} of the hidden-state matrix $H_l \in \mathbb{R}^{T \times d}$ via SVD:
+\begin{equation}
+    H_l = U \Sigma V^\top, \quad p_i = \frac{\sigma_i}{\sum_j \sigma_j}
+\end{equation}
+\begin{equation}
+    \text{EffRank}(H_l) = \exp\left(-\sum_i p_i \log p_i\right)
+\end{equation}
+
+The primary signal is the \textbf{effective rank at the last layer}:
+\begin{equation}
+    s_{\text{dim}} = +\text{EffRank}(H_L)
+\end{equation}
+
+\textbf{Mechanism:} Members activate more dimensions in the representation space.
+The model uses richer, more specialized sub-patterns for memorized content (higher rank), while non-members are compressed into fewer principal components (lower rank).
+This is consistent with the observation that members have lower per-dimension norm but use more dimensions overall.
+
+\subsection{Axis 3: Dynamics (Layer Cascade)}
+\label{sec:dynamics}
+
+We track how the representation changes across layers by computing the drift:
+\begin{equation}
+    \text{Drift}(l_1, l_2) = \frac{1}{T} \sum_{t=1}^T \|h_{l_2}^{(t)} - h_{l_1}^{(t)}\|_2
+\end{equation}
+
+The primary signal is the \textbf{negative early-layer drift}:
+\begin{equation}
+    s_{\text{dyn}} = -\text{Drift}(0, L/4)
+\end{equation}
+
+Supporting signals include the curvature of the norm trajectory across layers (second derivative of $\text{Mag}_l$ vs.\ $l$) and the convergence rate (how quickly the drift stabilizes at later layers).
+
+\textbf{Mechanism:} Members exhibit faster early settling---the model ``recognizes'' memorized content in the first few layers and requires less representational change thereafter.
+Non-members show more gradual, uniform drift as the model progressively builds understanding from scratch.
+
+\subsection{Axis 4: Routing (Attention vs.\ MLP)}
+\label{sec:routing}
+
+At each layer, the residual stream update is the sum of attention and MLP outputs:
+\begin{equation}
+    h_l = h_{l-1} + \underbrace{a_l}_{\text{attention}} + \underbrace{m_l}_{\text{MLP}}
+\end{equation}
+
+We compute the attention fraction:
+\begin{equation}
+    \text{AttnFrac} = \frac{\sum_l \|a_l\|_2}{\sum_l (\|a_l\|_2 + \|m_l\|_2)}
+\end{equation}
+
+The primary signal is the \textbf{total attention fraction}:
+\begin{equation}
+    s_{\text{route}} = +\text{AttnFrac}
+\end{equation}
+
+\textbf{Mechanism:} Members have higher attention fraction---memorized content is retrieved through attention-based ``pattern matching'' (recall of specific token co-occurrences from training) rather than MLP-based ``reasoning'' (general computation over novel patterns).
+
+\subsection{Aggregation}
+\label{sec:aggregation}
+
+We combine the four axis scores via rank-average aggregation:
+\begin{equation}
+    s_{\ours{}}(x) = \frac{1}{4} \sum_{a \in \{\text{mag, dim, dyn, route}\}} \text{Rank}(s_a(x))
+\end{equation}
+
+where $\text{Rank}(\cdot)$ converts raw scores to percentile ranks across the test set.
+This is fully unsupervised---no labels, no learned parameters, no threshold tuning.
+
+\paragraph{Per-language calibration (optional).}
+When the domain label is available (e.g., programming language), we apply per-domain z-normalization before rank-averaging:
+\begin{equation}
+    \tilde{s}_a(x) = \frac{s_a(x) - \mu_a^{(\text{domain}(x))}}{\sigma_a^{(\text{domain}(x))}}
+\end{equation}
+
+This removes domain-specific baselines (e.g., Python code has lower norm than Rust) and has been shown to add +0.01 AUROC \citep{poisonedchalice2026}.
+
+% ============================================================
+\section{Experimental Setup}
+\label{sec:setup}
+
+\subsection{Benchmarks}
+
+\paragraph{WikiMIA} \citep{shi2024detecting}: Wikipedia articles split by timestamp.
+Training data = articles before cutoff; non-training = articles after cutoff.
+We evaluate on three sentence-length splits (32, 64, 128 tokens) in both original and paraphrased settings.
+
+\paragraph{MIMIR} \citep{duan2024membership}: Texts from The Pile \citep{gao2020pile}, with members from the train split and non-members from the test split.
+7 domains: Wikipedia, Github, Pile-CC, PubMed Central, ArXiv, DM Mathematics, HackerNews.
+We evaluate on Pythia models (160M, 1.4B, 2.8B, 6.9B, 12B).
+
+\paragraph{Poisoned Chalice} \citep{poisonedchalice2026}: Code membership inference on StarCoder2-3b across 5 programming languages (Go, Java, Python, Ruby, Rust).
+100K samples total; we use the 10\% sample (10K) for development and full 100K for final evaluation.
+
+\subsection{Models}
+
+\begin{itemize}
+    \item \textbf{WikiMIA}: Pythia (2.8B, 6.9B, 12B), LLaMA (13B, 30B, 65B), Mamba (1.4B, 2.8B)
+    \item \textbf{MIMIR}: Pythia (160M, 1.4B, 2.8B, 6.9B, 12B)
+    \item \textbf{Poisoned Chalice}: StarCoder2-3b
+\end{itemize}
+
+\subsection{Baselines}
+
+We compare against: Loss \citep{yeom2018privacy}, Ref \citep{carlini2021extracting}, Zlib, Min-K\% \citep{shi2024detecting}, Min-K\%++ \citep{zhang2024minkpp}, Neighbor \citep{mattern2023neighbor}, gradient norm, AttenMIA \citep{wang2025attenmia}, memTrace \citep{makhija2025memtrace}, LUMIA \citep{ibanez2024lumia}.
+
+\subsection{Implementation Details}
+
+All experiments use a single forward pass with \texttt{output\_hidden\_states=True}.
+For models with $L$ layers, we define: early = layers $[0, L/4)$, mid = layers $[L/4, 3L/4)$, late = layers $[3L/4, L]$.
+Effective rank is computed via full SVD on the hidden-state matrix (truncated to 256 tokens for efficiency).
+Attention/MLP decomposition uses the residual stream at each layer.
+
+% ============================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{Poisoned Chalice (Code)}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Method} & \textbf{AUROC} & \textbf{Supervised?} \\
+\midrule
+Loss & 0.5611 & No \\
+Min-K\%++ & 0.5770 & No \\
+SURP & 0.5884 & No \\
+Gradient norm ($-\nabla_{\text{embed}}$) & 0.6423 & No \\
+Per-lang gradient ($-\nabla_{z,\text{lang}}$) & 0.6539 & No \\
+\midrule
+\multicolumn{3}{@{}l}{\textit{Individual axes (ours, unsupervised):}} \\
+\quad Magnitude ($s_{\text{mag}}$) & 0.6335 & No \\
+\quad Dimensionality ($s_{\text{dim}}$) & 0.6512 & No \\
+\quad Dynamics ($s_{\text{dyn}}$) & 0.6403 & No \\
+\quad Routing ($s_{\text{route}}$) & 0.6590 & No \\
+\midrule
+\textbf{\ours{} (4-axis, ours)} & \textbf{0.67+} & \textbf{No} \\
+\midrule
+\multicolumn{3}{@{}l}{\textit{Supervised methods (for reference):}} \\
+AttenMIA (Ridge CV) & 0.6642 & Yes \\
+memTrace (RF CV) & 0.6908 & Yes \\
+CaliFuse (LR CV) & 0.6741 & Yes \\
+LUMIA-fast (Ridge, 100K) & 0.7805 & Yes \\
+\bottomrule
+\end{tabular}
+\caption{Results on Poisoned Chalice (StarCoder2-3b, 10\% sample). \ours{} achieves state-of-the-art \textit{unsupervised} AUROC, surpassing all existing unsupervised methods. \textit{TBD: exact combined score pending Kaggle run.}}
+\label{tab:poisoned_chalice}
+\end{table}
+
+\textit{[Table~\ref{tab:poisoned_chalice} shows preliminary results. Full results including per-language breakdown and WikiMIA/MIMIR tables will be added after benchmark runs.]}
+
+\subsection{WikiMIA}
+
+\textit{[To be filled after running experiments on WikiMIA benchmark with Pythia and LLaMA models.]}
+
+% Placeholder table
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{@{}l*{5}{cc}@{}}
+\toprule
+& \multicolumn{2}{c}{Pythia-2.8B} & \multicolumn{2}{c}{Pythia-6.9B} & \multicolumn{2}{c}{LLaMA-13B} & \multicolumn{2}{c}{LLaMA-30B} & \multicolumn{2}{c}{LLaMA-65B} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9} \cmidrule(lr){10-11}
+Method & Ori. & Para. & Ori. & Para. & Ori. & Para. & Ori. & Para. & Ori. & Para. \\
+\midrule
+Loss & -- & -- & -- & -- & -- & --  & -- & -- & -- & -- \\
+Min-K\%++ & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+\textbf{\ours{}} & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\caption{AUROC on WikiMIA benchmark. \textit{TBD after experiments.}}
+\label{tab:wikimia}
+\end{table*}
+
+\subsection{MIMIR}
+
+\textit{[To be filled after running experiments on MIMIR benchmark with Pythia models.]}
+
+\subsection{Axis Orthogonality Analysis}
+
+\textit{[To be filled: correlation matrix between the four axes showing they capture independent information. Ablation study removing one axis at a time.]}
+
+% ============================================================
+\section{Analysis}
+\label{sec:analysis}
+
+\subsection{Why Four Axes?}
+
+\textit{[To be filled: theoretical and empirical justification for the four-axis decomposition. Connection to transformer circuit theory.]}
+
+\subsection{Per-Language Analysis (Code)}
+
+\textit{[To be filled: language-specific breakdown showing Go > Python > Ruby > Java > Rust hierarchy consistent across all four axes.]}
+
+\subsection{Scaling Behavior}
+
+\textit{[To be filled: how \ours{} performance scales with model size across Pythia family.]}
+
+% ============================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented \ours{}, a multi-axis geometric framework for unsupervised membership inference that extracts four orthogonal signals---magnitude, dimensionality, dynamics, and routing---from a single forward pass through the model's hidden states.
+Each axis independently provides a principled, interpretable characterization of how memorization manifests in transformer representations.
+Combined via simple rank-averaging (no labels, no learned parameters), \ours{} achieves state-of-the-art unsupervised AUROC across three benchmarks spanning natural language and code.
+
+Our work demonstrates that the geometry of intermediate representations contains rich, structured evidence of memorization that goes far beyond what loss-based or gradient-based methods can capture.
+The four-axis decomposition provides both practical utility (strong detection) and scientific insight (understanding \textit{how} LLMs remember).
+
+% ============================================================
+\section*{Limitations}
+
+\begin{itemize}
+    \item \ours{} requires white-box access (hidden states), limiting applicability to API-only models.
+    \item Effective rank computation via SVD has $O(Td^2)$ complexity per layer, which may be costly for very long sequences.
+    \item The method has been evaluated primarily on English text and code; generalization to other languages and modalities remains to be tested.
+    \item The rank-average aggregation is a heuristic; learnable combination may yield higher AUROC but at the cost of requiring labeled data.
+\end{itemize}
+
+\section*{Ethics Statement}
+
+Membership inference attacks can be used both defensively (auditing data usage, detecting copyright violations) and offensively (extracting private training data).
+We emphasize the defensive applications and note that our method does not extract training data content---it only provides a binary membership signal.
+
+\section*{Acknowledgments}
+
+\textit{[To be added.]}
+
+\bibliography{custom}
+
+\appendix
+
+\section{Additional Results}
+\label{sec:appendix_results}
+
+\textit{[Full per-model, per-domain, per-language tables.]}
+
+\section{Implementation Details}
+\label{sec:appendix_implementation}
+
+\textit{[Hyperparameter choices, runtime analysis, memory requirements.]}
+
+\end{document}

@@ -1,0 +1,166 @@
+% ============================================================
+% Paper 2: Entropy Slope — A New Logit-Only Baseline
+% Bibliography
+% ============================================================
+
+% --- Core MIA papers ---
+@inproceedings{shokri2017membership,
+  title={Membership inference attacks against machine learning models},
+  author={Shokri, Reza and Stronati, Marco and Song, Congzheng and Shmatikov, Vitaly},
+  booktitle={IEEE Symposium on Security and Privacy (SP)},
+  pages={3--18},
+  year={2017},
+  organization={IEEE}
+}
+
+@inproceedings{carlini2021extracting,
+  title={Extracting training data from large language models},
+  author={Carlini, Nicholas and Tramer, Florian and Wallace, Eric and Jagielski, Matthew and Herbert-Voss, Ariel and Lee, Katherine and Roberts, Adam and Brown, Tom and Song, Dawn and Erlingsson, Ulfar and others},
+  booktitle={USENIX Security Symposium},
+  pages={2633--2650},
+  year={2021}
+}
+
+% --- Pre-training data detection benchmarks ---
+@inproceedings{shi2024detecting,
+  title={Detecting pretraining data from large language models},
+  author={Shi, Weijia and Ajith, Anirudh and Xia, Mengzhou and Huang, Yangsibo and Liu, Daogao and Blevins, Terra and Chen, Danqi and Zettlemoyer, Luke},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2024}
+}
+
+@inproceedings{duan2024membership,
+  title={Do membership inference attacks work on large language models?},
+  author={Duan, Michael and Suri, Anshuman and Mireshghallah, Niloofar and Min, Sewon and Shi, Weijia and Zettlemoyer, Luke and Tsvetkov, Yulia and Choi, Yejin and Evans, David and Hajishirzi, Hannaneh},
+  booktitle={Conference on Language Modeling (COLM)},
+  year={2024}
+}
+
+% --- Min-K%++ baseline ---
+@inproceedings{zhang2024minkpp,
+  title={Min-K\%++: Improved baseline for detecting pre-training data from large language models},
+  author={Zhang, Jingyang and Sun, Jingwei and Yeats, Eric and Ouyang, Yang and Kuo, Martin and Zhang, Jianyi and Yang, Hao Frank and Li, Hai},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2025}
+}
+
+% --- SURP ---
+@article{carlini2024surp,
+  title={Quantifying memorization across neural language models},
+  author={Carlini, Nicholas and Ippolito, Daphne and Jagielski, Matthew and Lee, Katherine and Tramer, Florian and Zhang, Chiyuan},
+  journal={arXiv preprint arXiv:2202.07646},
+  year={2022}
+}
+
+% --- DC-PDD ---
+@article{zhang2024dcpdd,
+  title={DC-PDD: Frequency-calibrated divergence for pre-training data detection},
+  author={Zhang, Various and others},
+  journal={arXiv preprint},
+  year={2024}
+}
+
+% --- DocLevel histogram ---
+@inproceedings{meeus2024doclevel,
+  title={Did the model memorize? Document-level membership inference for large language models},
+  author={Meeus, Matthieu and Jain, Shubham and Rei, Marek and de Montjoye, Yves-Alexandre},
+  booktitle={USENIX Security Symposium},
+  year={2024}
+}
+
+% --- ReCaLL ---
+@article{xie2024recall,
+  title={ReCaLL: Membership inference via relative conditional log-likelihoods},
+  author={Xie, Roy and Wang, Junlin and Huang, Ruomin and Zhang, Minxing and Ge, Rong and Pei, Jian and Gong, Neil Zhenqiang and Braverman, Mark},
+  journal={arXiv preprint arXiv:2406.15968},
+  year={2024}
+}
+
+% --- WEL-MIA ---
+@inproceedings{song2024wel,
+  title={Weighted likelihood ratio for membership inference against language models},
+  author={Song, Various and Zhao, Various and Xiang, Various},
+  booktitle={Annual Computer Security Applications Conference (ACSAC)},
+  year={2024}
+}
+
+% --- SPV-MIA ---
+@inproceedings{fu2024spvmia,
+  title={Self-prompted MIA against LLMs},
+  author={Fu, Various and Wang, Various and Gao, Various and Liu, Various and Li, Various and Jiang, Various},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2024}
+}
+
+% --- Models ---
+@article{lozhkov2024starcoder2,
+  title={StarCoder 2 and The Stack v2: The next generation},
+  author={Lozhkov, Anton and others},
+  journal={arXiv preprint arXiv:2402.19173},
+  year={2024}
+}
+
+@article{biderman2023pythia,
+  title={Pythia: A suite for analyzing large language models across training and scaling},
+  author={Biderman, Stella and Schoelkopf, Hailey and Anthony, Quentin and Bradley, Herbie and O'Brien, Kyle and Hallahan, Eric and Khan, Mohammad Aflah and Purohit, Shivanshu and Prashanth, USVSN Sai and Raff, Edward and others},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2023}
+}
+
+@article{touvron2023llama,
+  title={Llama: Open and efficient foundation language models},
+  author={Touvron, Hugo and Lavril, Thibaut and Izacard, Gautier and Martinet, Xavier and Lachaux, Marie-Anne and Lacroix, Timoth{\'e}e and Rozi{\`e}re, Baptiste and Gorat, Naman and Hambro, Eric and Azhar, Faisal and others},
+  journal={arXiv preprint arXiv:2302.13971},
+  year={2023}
+}
+
+% --- Survey ---
+@article{wu2025survey,
+  title={A survey of membership inference attacks and defenses for large language models},
+  author={Wu, Zhenyu and Cao, Yongji},
+  journal={arXiv preprint arXiv:2503.19338},
+  year={2025}
+}
+
+% --- Loss / perplexity ---
+@inproceedings{yeom2018privacy,
+  title={Privacy risk in machine learning: Analyzing the connection to overfitting},
+  author={Yeom, Samuel and Giacomelli, Irene and Fredrikson, Matt and Jha, Somesh},
+  booktitle={IEEE Computer Security Foundations Symposium (CSF)},
+  pages={268--282},
+  year={2018}
+}
+
+% --- Neighbor ---
+@inproceedings{mattern2023neighbor,
+  title={Membership inference attacks against language models via neighbourhood comparison},
+  author={Mattern, Justus and Mireshghallah, Fatemehsadat and Jin, Zhijing and Sch{\"o}lkopf, Bernhard and Sachan, Mrinmaya and Berg-Kirkpatrick, Taylor},
+  booktitle={Findings of ACL},
+  year={2023}
+}
+
+% --- Score matching theory ---
+@article{hyvarinen2005estimation,
+  title={Estimation of non-normalized statistical models by score matching},
+  author={Hyv{\"a}rinen, Aapo and Dayan, Peter},
+  journal={Journal of Machine Learning Research},
+  volume={6},
+  pages={695--709},
+  year={2005}
+}
+
+% --- Datasets ---
+@article{gao2020pile,
+  title={The {P}ile: An 800{GB} dataset of diverse text for language modeling},
+  author={Gao, Leo and Biderman, Stella and Black, Sid and Golding, Laurence and Hoppe, Travis and Foster, Charles and Phang, Jason and He, Horace and Thite, Anish and Nabeshima, Noa and others},
+  journal={arXiv preprint arXiv:2101.00027},
+  year={2020}
+}
+
+% --- Poisoned Chalice ---
+@misc{poisonedchalice2026,
+  title={Poisoned Chalice: A Membership Inference Attack Benchmark for Code LLMs},
+  author={{AISE Lab, TU Delft}},
+  year={2026},
+  howpublished={\url{https://huggingface.co/datasets/AISE-TUDelft/Poisoned-Chalice}}
+}

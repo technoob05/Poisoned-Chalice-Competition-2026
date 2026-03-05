@@ -1,0 +1,9 @@
+# Exclude large datasets and cache
+poisoned_chalice_dataset/
+*.zip
+.hf_cache/
+.tmp/
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store
+huggingfacetoken.md

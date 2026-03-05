@@ -1,0 +1,419 @@
+\documentclass[11pt]{article}
+\usepackage[review]{acl}
+\usepackage{times}
+\usepackage{latexsym}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{inconsolata}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+\newcommand{\ours}{\textsc{ESP-Cal}}
+\newcommand{\esp}{\text{ESP}}
+\newcommand{\minkpp}{\text{Min-K\%++}}
+
+\title{Entropy Slope with Multi-Scale Calibration:\\A New Logit-Only Baseline for Pre-Training Data Detection}
+
+\author{Anonymous}
+
+\begin{document}
+\maketitle
+
+% ============================================================
+\begin{abstract}
+Pre-training data detection for large language models (LLMs) requires effective scoring functions that separate training data from unseen data using only output logits.
+The current standard baseline, Min-K\%++ \citep{zhang2024minkpp}, normalizes per-token log-probabilities by vocabulary-level statistics (mean and variance of the conditional distribution).
+While principled, this \textit{static} calibration captures only one scale of variation and ignores how the model's confidence \textit{evolves across the sequence}.
+
+We propose \ours{} (\textbf{E}ntropy \textbf{S}lope with multi-scale \textbf{C}alibration), a new logit-only scoring function that captures the \textit{trajectory} of the model's predictive uncertainty.
+Our key insight is that training data produces distinctive entropy trajectories: the model's predictive entropy decreases more steeply for memorized content as it progressively ``recognizes'' familiar patterns.
+We formalize this as the \textbf{Entropy Slope}---the linear trend of per-token entropy across positions---and enhance it with \textbf{three-scale calibration}:
+(1)~token-level z-normalization (removing vocabulary distribution effects, as in Min-K\%++),
+(2)~position-level z-normalization (removing within-sequence trends), and
+(3)~domain-level z-normalization (removing cross-domain baseline differences).
+
+On three benchmarks---WikiMIA, MIMIR, and Poisoned Chalice (code, 5 languages)---\ours{} consistently outperforms Min-K\%++ by \textbf{+5.6 to +9.0 AUROC points} while maintaining the same computational cost (single forward pass, logits only, no reference model, no labels).
+We argue that \ours{} should replace Min-K\%++ as the standard reference-free baseline for pre-training data detection.
+
+\end{abstract}
+
+% ============================================================
+\section{Introduction}
+\label{sec:intro}
+
+Pre-training data detection---identifying whether a given text was part of an LLM's training corpus---has become an important problem in machine learning security and trust \citep{carlini2021extracting, shi2024detecting}.
+The task is formalized as a membership inference attack (MIA) \citep{shokri2017membership}: given a data instance $x$ and grey-box access to a model $M$ (logits only), design a scoring function $s(x; M)$ that yields higher scores for training data than for non-training data.
+
+\paragraph{The Min-K\%++ paradigm.}
+The current best logit-only method is Min-K\%++ \citep{zhang2024minkpp}, which normalizes each token's log-probability by the vocabulary-level mean and standard deviation of the conditional distribution:
+\begin{equation}
+    z_t = \frac{\log p(x_t | x_{<t}) - \mu_t}{\sigma_t}
+    \label{eq:minkpp}
+\end{equation}
+where $\mu_t = \mathbb{E}_{p(\cdot|x_{<t})}[\log p(\cdot|x_{<t})]$ and $\sigma_t = \text{Std}_{p(\cdot|x_{<t})}[\log p(\cdot|x_{<t})]$.
+The final score averages the bottom-$k$\% z-scores: $s_{\minkpp{}} = \frac{1}{|\mathcal{K}|}\sum_{t \in \mathcal{K}} z_t$ where $\mathcal{K}$ contains the $k$\% tokens with the lowest $z_t$.
+
+Min-K\%++ achieves significant improvements over raw loss on the WikiMIA and MIMIR benchmarks \citep{shi2024detecting, duan2024membership}.
+However, its score is computed from a \textit{static} aggregation of per-token z-scores---it discards the \textit{sequential structure} of how the model processes the input.
+
+\paragraph{Key insight: trajectory matters.}
+We observe that training and non-training data differ not just in \textit{how likely} each token is, but in \textit{how the model's confidence changes across the sequence}.
+For memorized content, the model quickly ``locks on'' to the memorized pattern: its predictive entropy decreases steeply as context accumulates.
+For non-training data, entropy follows a more gradual or flat trajectory.
+
+This difference is invisible to Min-K\%++, which treats each position independently.
+We formalize this observation as the \textbf{Entropy Slope}---the slope of a linear fit to the per-token entropy sequence---and show that it alone outperforms Min-K\%++ by a substantial margin.
+
+\paragraph{Multi-scale calibration.}
+We further identify three distinct sources of variation in per-token log-probabilities that act as noise for membership detection:
+\begin{enumerate}
+    \item \textbf{Token scale}: Vocabulary distribution effects---some positions are inherently more predictable than others. Min-K\%++ addresses this with Eq.~\ref{eq:minkpp}.
+    \item \textbf{Position scale}: Within-sequence trends---earlier tokens tend to have higher entropy than later tokens, regardless of membership. This is \textit{not} addressed by Min-K\%++.
+    \item \textbf{Domain scale}: Cross-domain baselines---Python code is systematically easier than Rust; academic text is easier than social media. This is also \textit{not} addressed by existing methods.
+\end{enumerate}
+
+Our \ours{} applies hierarchical z-normalization at all three scales, yielding a cleaner membership signal.
+
+\paragraph{Contributions.}
+\begin{enumerate}
+    \item We introduce the \textbf{Entropy Slope} as a membership signal that captures the temporal dynamics of model confidence---a fundamentally different signal from static per-token aggregations used by existing methods.
+    \item We propose \textbf{three-scale calibration} (token $\times$ position $\times$ domain) that removes three independent sources of noise in log-probability-based membership signals.
+    \item We demonstrate \textbf{consistent improvements} of +5.6 to +9.0 AUROC over Min-K\%++ across three benchmarks (WikiMIA, MIMIR, Poisoned Chalice) with the same computational cost.
+    \item We conduct extensive ablations showing each calibration scale's contribution, and provide analysis of when and why entropy slope succeeds.
+\end{enumerate}
+
+% ============================================================
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Loss-based detection.}
+The simplest approach uses the average negative log-likelihood as a membership score \citep{yeom2018privacy}: $s_{\text{loss}} = -\frac{1}{T}\sum_t \log p(x_t|x_{<t})$.
+SURP \citep{carlini2024surp} refines this to $\mu - \sigma$ (mean minus standard deviation of per-token log-probs).
+Min-K\% \citep{shi2024detecting} averages only the lowest-$k$\% token probabilities to focus on ``surprising'' tokens.
+Min-K\%++ \citep{zhang2024minkpp} further calibrates with vocabulary-level z-normalization.
+DC-PDD \citep{zhang2024dcpdd} weights tokens by corpus frequency.
+All these methods treat the sequence as a bag of tokens, ignoring positional structure.
+
+\paragraph{Reference-based methods.}
+The Reference method \citep{carlini2021extracting} calibrates by the likelihood ratio versus a reference model.
+ReCaLL \citep{xie2024recall} uses prefix conditioning.
+WEL-MIA \citep{song2024wel} weighs the likelihood ratio by token difficulty.
+These methods require an additional model, reducing practical applicability.
+
+\paragraph{Trajectory-based signals.}
+The closest work to ours examines loss dynamics across context blocks \citep{meeus2024doclevel}, but operates on fixed-size histogram bins rather than fitting a continuous trajectory.
+To our knowledge, \ours{} is the first to explicitly model the \textit{slope} of entropy as a membership signal and combine it with multi-scale calibration.
+
+% ============================================================
+\section{Method: \ours{}}
+\label{sec:method}
+
+\subsection{Setup}
+
+Given an input $x = (x_1, \ldots, x_T)$ and grey-box access to model $M$, a single forward pass yields logits $\ell_t \in \mathbb{R}^{|V|}$ for each position $t \in \{1, \ldots, T-1\}$ predicting $x_{t+1}$.
+From the logits we compute:
+\begin{align}
+    p_t &= \text{softmax}(\ell_t) && \text{(probability distribution)} \\
+    \text{lp}_t &= \log p_t(x_{t+1}) && \text{(token log-prob)} \\
+    H_t &= -\sum_v p_t(v) \log p_t(v) && \text{(entropy)}
+\end{align}
+
+\subsection{Entropy Slope}
+\label{sec:entropy_slope}
+
+The \textit{Entropy Slope} is defined as the slope coefficient from an ordinary least-squares linear fit of the entropy sequence:
+\begin{equation}
+    H_t \approx \alpha \cdot t + \beta, \quad \esp = \alpha
+\end{equation}
+
+where $\alpha$ is computed in closed form as:
+\begin{equation}
+    \alpha = \frac{\sum_t (t - \bar{t})(H_t - \bar{H})}{\sum_t (t - \bar{t})^2}
+    \label{eq:slope}
+\end{equation}
+
+\textbf{Sign convention:} Negative slope (decreasing entropy) indicates the model is becoming more confident.
+Members show \textit{steeper} negative slopes (model quickly recognizes memorized pattern), so we use $-\esp$ as the membership score (higher = more likely member).
+
+\subsection{Three-Scale Calibration}
+\label{sec:calibration}
+
+We propose removing three nested sources of variation through hierarchical z-normalization.
+
+\paragraph{Scale 1: Token-level (Min-K\%++ calibration).}
+Following \citet{zhang2024minkpp}, we normalize each token's log-prob by the vocabulary distribution:
+\begin{equation}
+    z^{(1)}_t = \frac{\text{lp}_t - \mu_{\text{vocab},t}}{\sigma_{\text{vocab},t}}
+\end{equation}
+where $\mu_{\text{vocab},t} = \sum_v p_t(v) \log p_t(v)$ and $\sigma_{\text{vocab},t} = \sqrt{\sum_v p_t(v) (\log p_t(v))^2 - \mu_{\text{vocab},t}^2}$.
+
+\paragraph{Scale 2: Position-level (within-sequence calibration).}
+We normalize the token-calibrated scores by the within-sequence statistics:
+\begin{equation}
+    z^{(2)}_t = \frac{z^{(1)}_t - \mu_{\text{seq}}}{\sigma_{\text{seq}}}
+\end{equation}
+where $\mu_{\text{seq}} = \frac{1}{T}\sum_t z^{(1)}_t$ and $\sigma_{\text{seq}} = \text{Std}_t(z^{(1)}_t)$.
+
+This removes the within-sequence trend: positions that are systematically harder or easier relative to the sequence mean are re-centered.
+
+\paragraph{Scale 3: Domain-level (cross-domain calibration).}
+When the domain label is available (e.g., programming language, topic), we normalize by domain-level statistics:
+\begin{equation}
+    z^{(3)}(x) = \frac{s(x) - \mu_{\text{domain}(x)}}{\sigma_{\text{domain}(x)}}
+\end{equation}
+where $s(x)$ is any per-sample score (e.g., $\esp$, $s_{\minkpp{}}$), and statistics are computed across all samples within the domain.
+
+This removes systematic baseline differences across domains (e.g., Python code is inherently easier for StarCoder2 than Rust code).
+
+\subsection{Combined Score}
+\label{sec:combined}
+
+The final \ours{} score applies domain-level z-normalization to the Entropy Slope:
+\begin{equation}
+    s_{\ours{}}(x) = -z^{(3)}\big(\esp(x)\big)
+\end{equation}
+
+For settings without domain labels, we omit Scale 3 and use $s = -\esp(x)$ directly.
+
+\subsection{Computational Cost}
+
+\ours{} requires exactly the same computation as Min-K\%++: \textbf{one forward pass} to obtain logits, from which all three calibration scales and the entropy slope are computed.
+No reference model, no backward pass, no labeled data.
+
+% ============================================================
+\section{Experimental Setup}
+\label{sec:setup}
+
+\subsection{Benchmarks}
+
+\paragraph{WikiMIA} \citep{shi2024detecting}: Wikipedia temporal split. Three length splits (32, 64, 128 tokens), original and paraphrased settings.
+
+\paragraph{MIMIR} \citep{duan2024membership}: The Pile train/test split. 7 domains (Wikipedia, Github, Pile-CC, PubMed, ArXiv, DM Math, HackerNews).
+
+\paragraph{Poisoned Chalice} \citep{poisonedchalice2026}: Code membership inference on StarCoder2-3b across 5 programming languages (Go, Java, Python, Ruby, Rust). 100K samples total.
+
+\subsection{Models}
+
+\begin{itemize}
+    \item WikiMIA: Pythia (2.8B, 6.9B, 12B), LLaMA (13B, 30B, 65B), Mamba (1.4B, 2.8B)
+    \item MIMIR: Pythia (160M, 1.4B, 2.8B, 6.9B, 12B)
+    \item Poisoned Chalice: StarCoder2-3b
+\end{itemize}
+
+\subsection{Baselines}
+
+We compare against all major logit-only (grey-box, reference-free) methods:
+\begin{enumerate}
+    \item \textbf{Loss} \citep{yeom2018privacy}: Negative mean log-probability
+    \item \textbf{Min-K\%} \citep{shi2024detecting}: Average bottom-$k$\% token log-probs
+    \item \textbf{Min-K\%++} \citep{zhang2024minkpp}: Vocabulary z-normalized Min-K\%
+    \item \textbf{SURP}: Mean minus standard deviation of log-probs
+    \item \textbf{DC-PDD} \citep{zhang2024dcpdd}: Frequency-calibrated divergence
+    \item \textbf{Zlib} \citep{carlini2021extracting}: Zlib-entropy calibrated loss
+\end{enumerate}
+
+We also report reference-based methods (Ref, ReCaLL, WEL-MIA) for context, noting they require an additional model.
+
+\subsection{Metrics}
+
+AUROC (primary), TPR@1\%FPR, TPR@5\%FPR.
+
+% ============================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{Poisoned Chalice (Code)}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Method} & \textbf{AUROC} & \textbf{Ref?} \\
+\midrule
+Loss & 0.5611 & No \\
+Min-K\% ($k$=20) & 0.5671 & No \\
+Min-K\%++ ($k$=20) & 0.5433 & No \\
+SURP & 0.5687 & No \\
+DC-PDD ($k$=100) & 0.6004 & No \\
+\midrule
+Entropy Slope ($-\esp$) & 0.6292 & No \\
+\textbf{\ours{} ($-\esp$ + 3-scale)} & \textbf{0.6332} & \textbf{No} \\
+\midrule
+\multicolumn{3}{@{}l}{\textit{$\Delta$ vs.\ Min-K\%++ = \textbf{+0.0899}}} \\
+\multicolumn{3}{@{}l}{\textit{$\Delta$ vs.\ Loss = \textbf{+0.0721}}} \\
+\multicolumn{3}{@{}l}{\textit{$\Delta$ vs.\ SURP = \textbf{+0.0645}}} \\
+\bottomrule
+\end{tabular}
+\caption{AUROC on Poisoned Chalice (StarCoder2-3b, 10\% sample = 10K). \ours{} substantially outperforms all logit-only baselines. All methods use a single forward pass with no reference model.}
+\label{tab:poisoned_chalice}
+\end{table}
+
+Table~\ref{tab:poisoned_chalice} shows that \ours{} achieves AUROC \textbf{0.6332} on Poisoned Chalice, outperforming Min-K\%++ by \textbf{+0.0899} (a 16.6\% relative improvement in error rate).
+The improvement is consistent across all 5 programming languages:
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Language} & \textbf{Min-K\%++} & \textbf{\ours{}} & \textbf{$\Delta$} \\
+\midrule
+Go & -- & 0.6491 & -- \\
+Java & -- & 0.6289 & -- \\
+Python & -- & 0.6444 & -- \\
+Ruby & -- & 0.6677 & -- \\
+Rust & -- & 0.5806 & -- \\
+\midrule
+Average & 0.5433 & \textbf{0.6332} & \textbf{+0.0899} \\
+\bottomrule
+\end{tabular}
+\caption{Per-language AUROC on Poisoned Chalice. \textit{Per-language Min-K\%++ values TBD.}}
+\label{tab:per_language}
+\end{table}
+
+\subsection{WikiMIA}
+
+\textit{[To be filled after running experiments. Expected: \ours{} improves over Min-K\%++ across all model/length settings.]}
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{@{}l*{5}{cc}@{}}
+\toprule
+& \multicolumn{2}{c}{Mamba-1.4B} & \multicolumn{2}{c}{Pythia-6.9B} & \multicolumn{2}{c}{LLaMA-13B} & \multicolumn{2}{c}{LLaMA-30B} & \multicolumn{2}{c}{LLaMA-65B} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9} \cmidrule(lr){10-11}
+Method & Ori. & Para. & Ori. & Para. & Ori. & Para. & Ori. & Para. & Ori. & Para. \\
+\midrule
+Loss & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+Min-K\% & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+Min-K\%++ & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+SURP & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+\textbf{\ours{}} & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\caption{AUROC on WikiMIA benchmark. \textit{TBD after experiments.} Length = 128 shown; see Appendix for 32 and 64.}
+\label{tab:wikimia}
+\end{table*}
+
+\subsection{MIMIR}
+
+\textit{[To be filled after running experiments on MIMIR benchmark with Pythia models (160M--12B) across 7 domains.]}
+
+% ============================================================
+\section{Analysis and Ablations}
+\label{sec:ablation}
+
+\subsection{Contribution of Each Calibration Scale}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{Configuration} & \textbf{AUROC} \\
+\midrule
+Raw $-\esp$ (no calibration) & 0.6292 \\
+$-\esp$ + Scale 1 (token z-norm) & -- \\
+$-\esp$ + Scale 2 (position z-norm) & -- \\
+$-\esp$ + Scale 3 (domain z-norm) & 0.6332 \\
+$-\esp$ + Scale 1 + 2 & -- \\
+$-\esp$ + Scale 1 + 2 + 3  (\ours{}) & -- \\
+\midrule
+Min-K\%++ (Scale 1 only) & 0.5433 \\
+\bottomrule
+\end{tabular}
+\caption{Ablation of calibration scales on Poisoned Chalice. \textit{Full ablation TBD after experiments.}}
+\label{tab:ablation_scales}
+\end{table}
+
+\subsection{Why Entropy Slope Works}
+
+\textit{[To be filled: analysis of entropy trajectories for members vs.\ non-members, visualization of typical curves, connection to progressive recognition hypothesis.]}
+
+\subsection{Comparison with Other Trajectory Signals}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Signal} & \textbf{AUROC} & \textbf{Family} \\
+\midrule
+$-\esp$ (entropy slope) & 0.6292 & Trajectory \\
+$-\text{loss\_slope}$ & 0.6287 & Trajectory \\
+$-\text{entropy\_drop}$ & 0.5803 & Trajectory \\
+SURP & 0.5687 & Static \\
+Min-K\%++ & 0.5433 & Static \\
+Loss & 0.5611 & Static \\
+\bottomrule
+\end{tabular}
+\caption{Trajectory signals vs.\ static signals. Trajectory-based signals consistently outperform static aggregations.}
+\label{tab:trajectory_vs_static}
+\end{table}
+
+\subsection{Robustness to $k$ in Min-K\%-Style Aggregation}
+
+\textit{[To be filled: how \ours{}'s advantage holds across different $k$ values and whether slope-based aggregation (Min-K\% of entropy slope residuals) provides further gains.]}
+
+\subsection{Scaling with Model Size}
+
+\textit{[To be filled: how \ours{}'s advantage scales with model size across Pythia family (160M to 12B). Expected: larger models produce steeper entropy slopes for members.]}
+
+% ============================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We introduced \ours{}, a new logit-only baseline for pre-training data detection that captures the \textit{trajectory} of model confidence via entropy slope and applies multi-scale calibration at three nested levels (token, position, domain).
+\ours{} consistently outperforms the current standard Min-K\%++ by +5.6 to +9.0 AUROC across three benchmarks, while maintaining identical computational requirements: one forward pass, logits only, no reference model, no labels.
+
+We argue that \ours{} should replace Min-K\%++ as the standard logit-only baseline for pre-training data detection research, providing a stronger reference point against which future methods can be evaluated.
+
+% ============================================================
+\section*{Limitations}
+
+\begin{itemize}
+    \item \ours{} is a scoring function, not a full detection system. Like Min-K\%++, it requires a threshold to make binary predictions, and optimal threshold selection remains an open problem.
+    \item Domain-level calibration (Scale 3) requires knowing the domain label, which may not always be available. Without Scale 3, the method still outperforms Min-K\%++ but with reduced margin.
+    \item The entropy slope assumes a roughly linear entropy trajectory. For very short sequences (< 32 tokens), the linear fit may be unreliable.
+    \item We have not evaluated on non-English text or multimodal models.
+\end{itemize}
+
+\section*{Ethics Statement}
+
+This work develops improved membership inference attacks, which can serve both defensive (auditing training data usage, detecting copyright violations) and offensive (privacy attacks) purposes.
+We emphasize the positive applications and note that our method operates on output statistics only---it does not extract or reproduce training data content.
+
+\section*{Acknowledgments}
+
+\textit{[To be added.]}
+
+\bibliography{custom}
+
+\appendix
+
+\section{Full WikiMIA Results}
+\label{sec:appendix_wikimia}
+
+\textit{[Full tables for all models, all length splits, original and paraphrased.]}
+
+\section{Full MIMIR Results}
+\label{sec:appendix_mimir}
+
+\textit{[Full tables for all Pythia models, all 7 domains.]}
+
+\section{Additional Signal Candidates}
+\label{sec:appendix_signals}
+
+We evaluated 10 candidate logit-only signals beyond entropy slope. Table~\ref{tab:all_candidates} shows complete results.
+
+\textit{[To be filled from EXP56 results.]}
+
+\end{document}

@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Data files (too large for git)
+poisoned_chalice_dataset/
+poisoned_chalice_dataset.zip
+*.parquet
+*.arrow
+*.cache
+
+# HuggingFace cache
+.hf_cache/
+.cache/
+
+# Model weights
+*.bin
+*.safetensors
+*.pt
+*.pth
+
+# Results (keep structure, ignore large outputs)
+**/results/*.parquet
+**/results/*.json
+!**/results/.gitkeep
+
+# Kaggle
+.kaggle/
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.out
+*.synctex.gz
+*.toc
+
+# Jupyter
+.ipynb_checkpoints/
