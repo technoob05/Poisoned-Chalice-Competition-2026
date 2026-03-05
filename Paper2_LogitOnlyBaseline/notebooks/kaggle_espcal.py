@@ -135,7 +135,7 @@ for k in ["signal_esp", "signal_h_drop", "signal_loss", "h_mean", "h_std",
     if k in features:
         print(f"    {k}: {features[k]:.4f}")
 
-free_model(model, tokenizer, extractor)
+free_model(model, tokenizer, extractor, model_name="EleutherAI/pythia-160m-deduped")
 print("\n  ✓ SMOKE TEST PASSED — ready for full evaluation")
 
 # ═══════════════════════════════════════════
@@ -193,20 +193,22 @@ print("█" * 60)
 pc_results = exp.run_poisoned_chalice()
 
 # ═══════════════════════════════════════════
-# Cell 5: Ablation — 3-Scale Contribution
+# Cell 5: Ablation (already ran inside Poisoned Chalice)
 # ═══════════════════════════════════════════
 
 print("\n" + "█" * 60)
-print("  ABLATION: Scale Contribution Analysis")
+print("  ABLATION: 3-Scale Contribution (from Poisoned Chalice run)")
 print("█" * 60)
 
-ablation_results = exp.run_ablation()
-
-if ablation_results:
-    print("\n  Condition  | AUC  ")
-    print("  -----------|------")
-    for cond, auc in ablation_results.items():
-        print(f"  {cond:10s} | {auc:.4f}")
+# Ablation runs automatically inside run_poisoned_chalice(do_ablation=True)
+# Results are saved in the parquet + JSON output files
+if pc_results and "summary" in pc_results and pc_results["summary"].get("ablation"):
+    print("\n  Condition                                   | AUC  ")
+    print("  --------------------------------------------|------")
+    for row in pc_results["summary"]["ablation"]:
+        print(f"  {row['condition']:44s} | {row['auc']:.4f}")
+else:
+    print("  (Ablation results in JSON output files)")
 
 # ═══════════════════════════════════════════
 # Cell 6: Summary & Export

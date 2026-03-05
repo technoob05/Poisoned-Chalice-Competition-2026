@@ -133,7 +133,7 @@ print(f"  ✓ Extraction OK: {len(features)} features")
 for k in ["signal_magnitude", "signal_dimensionality", "signal_dynamics", "signal_routing", "loss"]:
     print(f"    {k}: {features[k]:.4f}")
 
-free_model(model, tokenizer, extractor)
+free_model(model, tokenizer, extractor, model_name="EleutherAI/pythia-160m-deduped")
 print("\n  ✓ SMOKE TEST PASSED — ready for full evaluation")
 
 # ═══════════════════════════════════════════
