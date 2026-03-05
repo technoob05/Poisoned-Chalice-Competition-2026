@@ -5,6 +5,7 @@ Benchmarks:
 1. WikiMIA (Shi et al., 2024)  — HuggingFace: swj0419/WikiMIA
 2. MIMIR (Duan et al., 2024)   — HuggingFace: iamgroot42/mimir  
 3. Poisoned Chalice (2026)     — HuggingFace: AISE-TUDelft/Poisoned-Chalice
+4. BookMIA (Shi et al., 2024)  — HuggingFace: swj0419/BookMIA
 
 Usage:
     pip install datasets huggingface_hub
@@ -171,6 +172,44 @@ def download_poisoned_chalice(output_dir: str):
     print(f"\n  Poisoned Chalice download complete → {save_dir}")
 
 
+def download_bookmia(output_dir: str):
+    """
+    BookMIA: Copyright book membership inference benchmark.
+    - Member: text excerpts from books published before model training cutoff
+    - Non-member: text excerpts from books published in 2023 
+    - Text length: 512 tokens
+    - 9,870 balanced samples (4,935 member + 4,935 non-member)
+    
+    Source: https://huggingface.co/datasets/swj0419/BookMIA
+    Paper: Shi et al., "Detecting Pretraining Data from Large Language Models", ICLR 2024
+    
+    Note: SoK paper (Meeus et al., SaTML 2025) shows BoW AUC ~0.94 on BookMIA,
+    indicating some distribution shift. Use alongside MIMIR for fair comparison.
+    """
+    from datasets import load_dataset
+    
+    save_dir = os.path.join(output_dir, "BookMIA")
+    os.makedirs(save_dir, exist_ok=True)
+    
+    print("\n" + "=" * 60)
+    print("  Downloading BookMIA benchmark")
+    print("=" * 60)
+    
+    try:
+        ds = load_dataset("swj0419/BookMIA", split="train")
+        ds.save_to_disk(save_dir)
+        n_member = sum(1 for row in ds if row["label"] == 1)
+        n_nonmember = len(ds) - n_member
+        print(f"    ✓ Saved {len(ds)} samples ({n_member} members, {n_nonmember} non-members)")
+        print(f"    Columns: {ds.column_names}")
+        print(f"    Text field: 'snippet' (512 tokens)")
+        print(f"    Label: 0=non-member (2023 books), 1=member (older books)")
+    except Exception as e:
+        print(f"    ✗ Error: {e}")
+    
+    print(f"\n  BookMIA download complete → {save_dir}")
+
+
 def download_all(output_dir: str):
     """Download all benchmarks."""
     os.makedirs(output_dir, exist_ok=True)
@@ -184,11 +223,13 @@ def download_all(output_dir: str):
     print("║    1. WikiMIA  (Shi et al., ICLR 2024)                   ║")
     print("║    2. MIMIR    (Duan et al., COLM 2024)                  ║")
     print("║    3. Poisoned Chalice (AISE-TUDelft, 2026)              ║")
+    print("║    4. BookMIA  (Shi et al., ICLR 2024)                   ║")
     print("╚" + "═" * 58 + "╝")
     
     download_wikimia(output_dir)
     download_mimir(output_dir)
     download_poisoned_chalice(output_dir)
+    download_bookmia(output_dir)
     
     # Summary
     print("\n" + "=" * 60)
@@ -209,7 +250,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="./data",
                         help="Directory to save downloaded datasets")
     parser.add_argument("--only", type=str, default="all",
-                        choices=["all", "wikimia", "mimir", "poisoned_chalice"],
+                        choices=["all", "wikimia", "mimir", "poisoned_chalice", "bookmia"],
                         help="Download only a specific benchmark")
     args = parser.parse_args()
     
@@ -221,3 +262,5 @@ if __name__ == "__main__":
         download_mimir(args.output_dir)
     elif args.only == "poisoned_chalice":
         download_poisoned_chalice(args.output_dir)
+    elif args.only == "bookmia":
+        download_bookmia(args.output_dir)

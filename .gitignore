@@ -26,6 +26,9 @@ desktop.ini
 # Data files (too large for git)
 poisoned_chalice_dataset/
 poisoned_chalice_dataset.zip
+benchmark_data/
+kaggle_*.zip
+_tmp_*.py
 *.parquet
 *.arrow
 *.cache

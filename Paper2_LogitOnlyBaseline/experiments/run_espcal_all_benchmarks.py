@@ -4,7 +4,7 @@
 ║  ESP-Cal: Entropy Slope + Multi-Scale Calibration for MIA    ║
 ║  Paper 2 — Full Benchmark Evaluation                         ║
 ║                                                               ║
-║  Benchmarks: Poisoned Chalice, WikiMIA, MIMIR                ║
+║  Benchmarks: Poisoned Chalice, WikiMIA, MIMIR, BookMIA       ║
 ║  Author: [Redacted for review]                               ║
 ║  Self-contained Kaggle notebook script                       ║
 ╚═══════════════════════════════════════════════════════════════╝
@@ -116,6 +116,9 @@ class Config:
         "arxiv", "dm_mathematics", "hackernews"
     ])
     mimir_model: str = "EleutherAI/pythia-2.8b-deduped"
+
+    # BookMIA-specific (Shi et al., 2024 — copyright books, 512 tokens)
+    bookmia_model: str = "EleutherAI/pythia-2.8b-deduped"
 
 
 # ═══════════════════════════════════════════
@@ -472,6 +475,36 @@ def load_mimir(cfg: Config) -> Dict[str, pd.DataFrame]:
     return data_by_domain
 
 
+def load_bookmia(cfg: Config) -> pd.DataFrame:
+    """Load BookMIA dataset (Shi et al., 2024).
+    
+    9,870 book excerpts (512 tokens), balanced members/non-members.
+    Members: text from books published before model training cutoff.
+    Non-members: text from books published in 2023.
+    Source: https://huggingface.co/datasets/swj0419/BookMIA
+    """
+    from datasets import load_dataset
+
+    print("\n  Loading BookMIA dataset...")
+
+    try:
+        ds = load_dataset("swj0419/BookMIA", split="train")
+        rows = []
+        for row in ds:
+            rows.append({
+                "text": row["snippet"],
+                "is_member": int(row["label"]),
+                "subset": f"book_{row.get('book_id', 0)}",
+            })
+        df = pd.DataFrame(rows)
+        mem = df["is_member"].sum()
+        print(f"    BookMIA: {len(df)} samples ({mem} members, {len(df)-mem} non-members)")
+        return df
+    except Exception as e:
+        print(f"    BookMIA: ERROR — {e}")
+        return pd.DataFrame()
+
+
 # ═══════════════════════════════════════════
 # 6. Evaluation Utilities
 # ═══════════════════════════════════════════
@@ -698,6 +731,25 @@ class ESPCalExperiment:
 
         return all_results
 
+    def run_bookmia(self):
+        """Full evaluation on BookMIA (Shi et al., 2024)."""
+        print("\n" + "█" * 60)
+        print("  BENCHMARK: BookMIA (Copyright Books)")
+        print("█" * 60)
+
+        model_name = self.cfg.bookmia_model
+        model, tokenizer = load_model(model_name, self.cfg.torch_dtype)
+        extractor = ESPExtractor(model, tokenizer, self.cfg)
+
+        df = load_bookmia(self.cfg)
+        if len(df) == 0:
+            print("  ✗ No BookMIA data loaded, skipping.")
+            return {}
+
+        return self._extract_and_evaluate(
+            df, extractor, "BookMIA", do_ablation=False, calibrate=False
+        )
+
     def _extract_and_evaluate(self, df: pd.DataFrame, extractor: ESPExtractor,
                                tag: str, do_ablation: bool = False,
                                calibrate: bool = True) -> Dict:
@@ -888,6 +940,12 @@ if __name__ == "__main__":
     # 3. MIMIR
     mimir_results = experiment.run_mimir()
 
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    # 4. BookMIA (Shi et al., 2024 — copyright books)
+    bookmia_results = experiment.run_bookmia()
+
     # ══════════════════════════════════════
     #  FINAL SUMMARY
     # ══════════════════════════════════════
@@ -912,5 +970,11 @@ if __name__ == "__main__":
         if res and "results" in res and len(res["results"]) > 0:
             best = res["results"].iloc[0]
             print(f"    {domain}: {best['score']:25s} AUC={best['auc']:.4f}")
+
+    print("\n  BookMIA:")
+    if bookmia_results and "results" in bookmia_results and len(bookmia_results["results"]) > 0:
+        best = bookmia_results["results"].iloc[0]
+        marker = "★" if "esp" in best["score"].lower() else " "
+        print(f"    {marker} {best['score']:25s} AUC={best['auc']:.4f}")
 
     print("\n  Done!")
