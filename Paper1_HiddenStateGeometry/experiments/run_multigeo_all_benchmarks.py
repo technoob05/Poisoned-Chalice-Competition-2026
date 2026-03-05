@@ -98,17 +98,44 @@ class Config:
 
     # WikiMIA-specific
     wikimia_lengths: List[int] = field(default_factory=lambda: [32, 64, 128, 256])
-    wikimia_model: str = "EleutherAI/pythia-2.8b-deduped"
+    wikimia_model: str = "EleutherAI/pythia-2.8b-deduped"  # default/primary
+    # Multi-model evaluation (SamplePaper: "5 families of 10 models")
+    wikimia_models: List[str] = field(default_factory=lambda: [
+        # Pythia family (trained on Pile, Wikipedia included)
+        "EleutherAI/pythia-2.8b-deduped",
+        "EleutherAI/pythia-6.9b-deduped",
+        # Mamba SSM (state-space model, different architecture)
+        "state-spaces/mamba-2.8b-hf",
+        # GPT-Neo family (trained on Pile)
+        "EleutherAI/gpt-neo-2.7B",
+        # OPT family (Meta, trained on diverse web data)
+        "facebook/opt-2.7b",
+    ])
 
     # MIMIR-specific
     mimir_domains: List[str] = field(default_factory=lambda: [
         "wikipedia", "github", "pile_cc", "pubmed_central",
         "arxiv", "dm_mathematics", "hackernews"
     ])
-    mimir_model: str = "EleutherAI/pythia-2.8b-deduped"
+    mimir_model: str = "EleutherAI/pythia-2.8b-deduped"  # default/primary
+    # Multi-model: Pythia suite (trained on Pile — MIMIR's source)
+    mimir_models: List[str] = field(default_factory=lambda: [
+        "EleutherAI/pythia-160m-deduped",
+        "EleutherAI/pythia-1.4b-deduped",
+        "EleutherAI/pythia-2.8b-deduped",
+        "EleutherAI/pythia-6.9b-deduped",
+    ])
 
     # BookMIA-specific (Shi et al., 2024 — copyright books, 512 tokens)
-    bookmia_model: str = "EleutherAI/pythia-2.8b-deduped"
+    bookmia_model: str = "EleutherAI/pythia-2.8b-deduped"  # default/primary
+    bookmia_models: List[str] = field(default_factory=lambda: [
+        "EleutherAI/pythia-2.8b-deduped",
+        "EleutherAI/pythia-6.9b-deduped",
+        "EleutherAI/gpt-neo-2.7B",
+    ])
+
+    # Multi-model control
+    multi_model: bool = True  # set False to use single model (faster)
 
 
 # ═══════════════════════════════════════════
@@ -677,65 +704,108 @@ class MultiGeoExperiment:
         return self._extract_and_evaluate(df, extractor, "PoisonedChalice")
 
     def run_wikimia(self):
-        """Full evaluation on WikiMIA."""
+        """Full evaluation on WikiMIA (multi-model)."""
         print("\n" + "█" * 60)
         print("  BENCHMARK: WikiMIA")
         print("█" * 60)
 
-        model_name = self.cfg.wikimia_model
-        model, tokenizer, n_layers = load_model(model_name, self.cfg.torch_dtype)
-        extractor = MultiGeoExtractor(model, tokenizer, n_layers, self.cfg)
-
+        models = self.cfg.wikimia_models if self.cfg.multi_model else [self.cfg.wikimia_model]
         data_by_length = load_wikimia(self.cfg)
 
         all_results = {}
-        for length_key, df in data_by_length.items():
-            print(f"\n  ── WikiMIA {length_key} ──")
-            results = self._extract_and_evaluate(
-                df, extractor, f"WikiMIA_{length_key}", znorm=False
-            )
-            all_results[length_key] = results
+        for model_name in models:
+            short_name = model_name.split("/")[-1]
+            print(f"\n  ╔══ Model: {model_name} ══╗")
+
+            try:
+                model, tokenizer, n_layers = load_model(model_name, self.cfg.torch_dtype)
+                extractor = MultiGeoExtractor(model, tokenizer, n_layers, self.cfg)
+
+                for length_key, df in data_by_length.items():
+                    print(f"\n  ── WikiMIA {length_key} / {short_name} ──")
+                    results = self._extract_and_evaluate(
+                        df.copy(), extractor, f"WikiMIA_{length_key}_{short_name}", znorm=False
+                    )
+                    all_results[f"{length_key}_{short_name}"] = results
+
+                # Free GPU memory before next model
+                del model, tokenizer, extractor
+                gc.collect()
+                torch.cuda.empty_cache()
+            except Exception as e:
+                print(f"  ✗ Failed to load {model_name}: {e}")
+                continue
 
         return all_results
 
     def run_mimir(self):
-        """Full evaluation on MIMIR."""
+        """Full evaluation on MIMIR (multi-model)."""
         print("\n" + "█" * 60)
         print("  BENCHMARK: MIMIR")
         print("█" * 60)
 
-        model_name = self.cfg.mimir_model
-        model, tokenizer, n_layers = load_model(model_name, self.cfg.torch_dtype)
-        extractor = MultiGeoExtractor(model, tokenizer, n_layers, self.cfg)
-
+        models = self.cfg.mimir_models if self.cfg.multi_model else [self.cfg.mimir_model]
         data_by_domain = load_mimir(self.cfg)
 
         all_results = {}
-        for domain, df in data_by_domain.items():
-            print(f"\n  ── MIMIR {domain} ──")
-            results = self._extract_and_evaluate(
-                df, extractor, f"MIMIR_{domain}", znorm=False
-            )
-            all_results[domain] = results
+        for model_name in models:
+            short_name = model_name.split("/")[-1]
+            print(f"\n  ╔══ Model: {model_name} ══╗")
+
+            try:
+                model, tokenizer, n_layers = load_model(model_name, self.cfg.torch_dtype)
+                extractor = MultiGeoExtractor(model, tokenizer, n_layers, self.cfg)
+
+                for domain, df in data_by_domain.items():
+                    print(f"\n  ── MIMIR {domain} / {short_name} ──")
+                    results = self._extract_and_evaluate(
+                        df.copy(), extractor, f"MIMIR_{domain}_{short_name}", znorm=False
+                    )
+                    all_results[f"{domain}_{short_name}"] = results
+
+                del model, tokenizer, extractor
+                gc.collect()
+                torch.cuda.empty_cache()
+            except Exception as e:
+                print(f"  ✗ Failed to load {model_name}: {e}")
+                continue
 
         return all_results
 
     def run_bookmia(self):
-        """Full evaluation on BookMIA (Shi et al., 2024)."""
+        """Full evaluation on BookMIA (multi-model, Shi et al., 2024)."""
         print("\n" + "█" * 60)
         print("  BENCHMARK: BookMIA (Copyright Books)")
         print("█" * 60)
 
-        model_name = self.cfg.bookmia_model
-        model, tokenizer, n_layers = load_model(model_name, self.cfg.torch_dtype)
-        extractor = MultiGeoExtractor(model, tokenizer, n_layers, self.cfg)
-
-        df = load_bookmia(self.cfg)
-        if len(df) == 0:
+        models = self.cfg.bookmia_models if self.cfg.multi_model else [self.cfg.bookmia_model]
+        df_base = load_bookmia(self.cfg)
+        if len(df_base) == 0:
             print("  ✗ No BookMIA data loaded, skipping.")
             return {}
 
-        return self._extract_and_evaluate(df, extractor, "BookMIA", znorm=False)
+        all_results = {}
+        for model_name in models:
+            short_name = model_name.split("/")[-1]
+            print(f"\n  ╔══ Model: {model_name} ══╗")
+
+            try:
+                model, tokenizer, n_layers = load_model(model_name, self.cfg.torch_dtype)
+                extractor = MultiGeoExtractor(model, tokenizer, n_layers, self.cfg)
+
+                results = self._extract_and_evaluate(
+                    df_base.copy(), extractor, f"BookMIA_{short_name}", znorm=False
+                )
+                all_results[short_name] = results
+
+                del model, tokenizer, extractor
+                gc.collect()
+                torch.cuda.empty_cache()
+            except Exception as e:
+                print(f"  ✗ Failed to load {model_name}: {e}")
+                continue
+
+        return all_results
 
     def _extract_and_evaluate(self, df: pd.DataFrame, extractor: MultiGeoExtractor,
                                tag: str, znorm: bool = True) -> Dict:
@@ -882,21 +952,43 @@ if __name__ == "__main__":
         if best is not None:
             print(f"    Best: {best['score']} = {best['auc']:.4f}")
 
-    print("\n  WikiMIA:")
-    for length_key, res in wikimia_results.items():
+    print("\n  WikiMIA (multi-model):")
+    for key, res in wikimia_results.items():
         if res and "results" in res and len(res["results"]) > 0:
             best = res["results"].iloc[0]
-            print(f"    {length_key}: {best['score']} = {best['auc']:.4f}")
+            print(f"    {key:40s} {best['score']} = {best['auc']:.4f}")
 
-    print("\n  MIMIR:")
-    for domain, res in mimir_results.items():
+    print("\n  MIMIR (multi-model):")
+    for key, res in mimir_results.items():
         if res and "results" in res and len(res["results"]) > 0:
             best = res["results"].iloc[0]
-            print(f"    {domain}: {best['score']} = {best['auc']:.4f}")
+            print(f"    {key:40s} {best['score']} = {best['auc']:.4f}")
 
-    print("\n  BookMIA:")
-    if bookmia_results and "results" in bookmia_results and len(bookmia_results["results"]) > 0:
-        best = bookmia_results["results"].iloc[0]
-        print(f"    Best: {best['score']} = {best['auc']:.4f}")
+    print("\n  BookMIA (multi-model):")
+    for key, res in bookmia_results.items():
+        if res and "results" in res and len(res["results"]) > 0:
+            best = res["results"].iloc[0]
+            print(f"    {key:40s} {best['score']} = {best['auc']:.4f}")
+
+    # ── Generate multi-model summary table ──
+    print("\n" + "─" * 60)
+    print("  MULTI-MODEL SUMMARY TABLE (best AUC per model)")
+    print("─" * 60)
+
+    all_model_results = []
+    for key, res in {**wikimia_results, **mimir_results, **bookmia_results}.items():
+        if res and "results" in res and len(res["results"]) > 0:
+            best = res["results"].iloc[0]
+            all_model_results.append({
+                "benchmark_model": key,
+                "best_signal": best["score"],
+                "auroc": best["auc"],
+            })
+    
+    if all_model_results:
+        summary_df = pd.DataFrame(all_model_results)
+        summary_path = os.path.join(cfg.output_dir, "multimodel_summary.csv")
+        summary_df.to_csv(summary_path, index=False)
+        print(f"\n  Multi-model summary → {summary_path}")
 
     print("\n  Done!")
