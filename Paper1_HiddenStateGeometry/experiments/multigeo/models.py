@@ -5,16 +5,31 @@ import shutil
 import torch
 
 
-def _disk_free_gb() -> float:
-    """Return free disk space in GB for the filesystem containing HF cache."""
+def _get_hf_cache_dir() -> str:
+    """Resolve the HuggingFace hub cache directory from env vars."""
+    if os.environ.get("HF_HUB_CACHE"):
+        return os.environ["HF_HUB_CACHE"]
+    hf_home = os.environ.get("HF_HOME",
+              os.path.join(os.path.expanduser("~"), ".cache", "huggingface"))
+    return os.path.join(hf_home, "hub")
+
+
+def _disk_free_gb(path: str = None) -> float:
+    """Return free space (GB) on the filesystem containing `path`."""
+    if path is None:
+        path = _get_hf_cache_dir()
+    # Walk up to find an existing directory for statvfs
+    check = path
+    while check and not os.path.exists(check):
+        check = os.path.dirname(check)
+    if not check:
+        check = "/"
     try:
-        cache_dir = os.path.expanduser("~")
-        stat = os.statvfs(cache_dir)
+        stat = os.statvfs(check)
         return (stat.f_bavail * stat.f_frsize) / 1e9
     except Exception:
         try:
-            import shutil as _sh
-            total, used, free = _sh.disk_usage(os.path.expanduser("~"))
+            total, used, free = shutil.disk_usage(check)
             return free / 1e9
         except Exception:
             return -1.0
@@ -41,7 +56,8 @@ def load_model(model_name: str, dtype_str: str = "bfloat16"):
     from transformers import AutoTokenizer, AutoModelForCausalLM
 
     free_gb = _disk_free_gb()
-    print(f"\n  Loading model: {model_name}  [disk free: {free_gb:.1f} GB]")
+    cache_dir = _get_hf_cache_dir()
+    print(f"\n  Loading model: {model_name}  [cache: {cache_dir}, free: {free_gb:.1f} GB]")
 
     # Safety: skip if model is known-large and disk is insufficient
     need = _MODEL_DISK_SIZES.get(model_name, 0)
@@ -91,9 +107,9 @@ def free_model(*objects, model_name: str = None):
 
 
 def _clean_hf_cache(model_name: str):
-    """Remove a specific model from HuggingFace cache to save disk."""
+    """Remove a specific model from HuggingFace cache to save disk/RAM."""
     try:
-        cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+        cache_dir = _get_hf_cache_dir()
         if not os.path.exists(cache_dir):
             return
         safe_name = "models--" + model_name.replace("/", "--")

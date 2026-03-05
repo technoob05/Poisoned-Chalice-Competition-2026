@@ -16,6 +16,23 @@ Tip: Set sample_fraction=0.1 for quick test (~30 min total)
 # ── Cell 1: Install & authenticate ──
 import subprocess, sys, os
 
+# ── Redirect HF cache to RAM-backed tmpfs (bypasses Kaggle disk quota) ──
+_shm_free = 0
+try:
+    _st = os.statvfs("/dev/shm")
+    _shm_free = (_st.f_bavail * _st.f_frsize) / 1e9
+except Exception:
+    pass
+if _shm_free > 30:
+    _hf_root = "/dev/shm/hf_cache"
+else:
+    _hf_root = "/tmp/hf_cache"
+os.makedirs(os.path.join(_hf_root, "hub"), exist_ok=True)
+os.environ["HF_HOME"] = _hf_root
+os.environ["HF_HUB_CACHE"] = os.path.join(_hf_root, "hub")
+os.environ["TRANSFORMERS_CACHE"] = os.path.join(_hf_root, "hub")
+print(f"✓ HF cache → {_hf_root}")
+
 subprocess.run([sys.executable, "-m", "pip", "install", "-q",
                 "transformers>=4.40", "accelerate", "datasets",
                 "scikit-learn", "scipy", "huggingface_hub>=0.23"],

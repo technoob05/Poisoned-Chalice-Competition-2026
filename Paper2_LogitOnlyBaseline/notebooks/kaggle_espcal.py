@@ -24,6 +24,25 @@ import os
 import subprocess
 import sys
 
+# ── Redirect HF cache to RAM-backed tmpfs (bypasses Kaggle disk quota) ──
+_shm_free = 0
+try:
+    _st = os.statvfs("/dev/shm")
+    _shm_free = (_st.f_bavail * _st.f_frsize) / 1e9
+except Exception:
+    pass
+
+if _shm_free > 30:  # Use /dev/shm if > 30 GB free (RAM-backed)
+    _hf_root = "/dev/shm/hf_cache"
+else:
+    _hf_root = "/tmp/hf_cache"  # Fallback to /tmp
+
+os.makedirs(os.path.join(_hf_root, "hub"), exist_ok=True)
+os.environ["HF_HOME"] = _hf_root
+os.environ["HF_HUB_CACHE"] = os.path.join(_hf_root, "hub")
+os.environ["TRANSFORMERS_CACHE"] = os.path.join(_hf_root, "hub")
+print(f"✓ HF cache → {_hf_root} ({_shm_free:.0f} GB /dev/shm available)")
+
 # Clone the repo
 REPO_URL = "https://github.com/technoob05/Poisoned-Chalice-Competition-2026.git"
 REPO_DIR = "/kaggle/working/repo"
@@ -135,7 +154,8 @@ for k in ["signal_esp", "signal_h_drop", "signal_loss", "h_mean", "h_std",
     if k in features:
         print(f"    {k}: {features[k]:.4f}")
 
-free_model(model, tokenizer, extractor, model_name="EleutherAI/pythia-160m-deduped")
+del model, tokenizer, extractor
+free_model(model_name="EleutherAI/pythia-160m-deduped")
 print("\n  ✓ SMOKE TEST PASSED — ready for full evaluation")
 
 # ═══════════════════════════════════════════
