@@ -39,7 +39,7 @@ CONFIG = {
     "wikimia_model": "EleutherAI/pythia-2.8b-deduped",
     "mimir_model": "EleutherAI/pythia-2.8b-deduped",
     "max_length": 512,
-    "sample_fraction": 1.0,
+    "sample_fraction": 0.1,  # 10% for quick test runs
     "split": "train",
     "seed": 42,
 

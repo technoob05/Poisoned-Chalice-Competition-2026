@@ -70,7 +70,7 @@ class Config:
     # ── Poisoned Chalice dataset ──
     dataset_name: str = "AISE-TUDelft/Poisoned-Chalice"
     languages: List[str] = field(default_factory=lambda: ["Go", "Java", "Python", "Ruby", "Rust"])
-    sample_fraction: float = 1.0
+    sample_fraction: float = 0.1          # 10% for quick test runs
     split: str = "test"
 
     # ── MultiGeo axes ──

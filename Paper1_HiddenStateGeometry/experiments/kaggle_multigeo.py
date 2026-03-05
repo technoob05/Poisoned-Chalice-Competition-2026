@@ -35,7 +35,7 @@ CONFIG = {
     "wikimia_model": "EleutherAI/pythia-2.8b-deduped",   # WikiMIA model
     "mimir_model": "EleutherAI/pythia-2.8b-deduped",     # MIMIR model
     "max_length": 512,
-    "sample_fraction": 1.0,  # Set 0.1 for quick test
+    "sample_fraction": 0.1,  # 10% for quick test runs
     "split": "train",        # "train" for dev, "test" for final submission
     "seed": 42,
 
