@@ -28,10 +28,23 @@ subprocess.run([sys.executable, "-m", "pip", "install", "-q",
 try:
     from kaggle_secrets import UserSecretsClient
     from huggingface_hub import login
-    login(token=UserSecretsClient().get_secret("posioned"), add_to_git_credential=True)
-    print("✓ HF authenticated")
-except:
-    print("○ Local mode")
+    user_secrets = UserSecretsClient()
+    token = None
+    for secret_name in ["HF_TOKEN", "posioned"]:
+        try:
+            token = user_secrets.get_secret(secret_name)
+            if token:
+                print(f"✓ Found secret: {secret_name}")
+                break
+        except Exception:
+            continue
+    if token:
+        login(token=token, add_to_git_credential=True)
+        print("✓ HuggingFace authenticated")
+    else:
+        print("○ No HF secret found")
+except Exception as e:
+    print(f"○ No Kaggle secrets: {e}")
 
 # ── Cell 2: Configuration ──
 CONFIG = {
@@ -40,7 +53,7 @@ CONFIG = {
     "mimir_model": "EleutherAI/pythia-2.8b-deduped",
     "max_length": 512,
     "sample_fraction": 0.1,  # 10% for quick test runs
-    "split": "train",
+    "split": "test",          # test split only
     "seed": 42,
 
     # ESP parameters
@@ -197,55 +210,82 @@ def calibrate_3scale(df, cols, n_buckets=16):
     return df
 
 # ── Cell 7: Data Loaders ──
-def load_pc_data(split="train", frac=1.0, seed=42):
+def load_pc_data(split="test", frac=1.0, seed=42):
     from datasets import load_dataset, load_from_disk
-    kp = "/kaggle/input/datasets/minh2duy/poisoned-chalice-dataset"
+    kp = "/kaggle/input/datasets/minh2duy/poisoned-chalice-dataset/poisoned_chalice_dataset"
     rows = []
     for lang in ["Go","Java","Python","Ruby","Rust"]:
         try:
-            if os.path.exists(kp):
-                ds = load_from_disk(os.path.join(kp, lang, split))
+            local_path = os.path.join(kp, lang, split)
+            if os.path.exists(local_path):
+                ds = load_from_disk(local_path)
             else:
                 ds = load_dataset("AISE-TUDelft/Poisoned-Chalice", lang, split=split)
+            count = 0
             for r in ds:
-                rows.append({"text": r["content"], "is_member": int(r["membership"]), "subset": lang})
-            print(f"  {lang}: {len(ds)}")
+                text = r.get("content") or ""
+                if not text or not text.strip():
+                    continue
+                mem = r["membership"]
+                is_mem = 1 if (mem == "member" or mem == 1) else 0
+                rows.append({"text": text, "is_member": is_mem, "subset": lang})
+                count += 1
+            print(f"    {lang}: {len(ds)} samples (kept {count})")
         except Exception as e:
-            print(f"  {lang}: ERR {e}")
+            print(f"    {lang}: ERR {e}")
     df = pd.DataFrame(rows)
     if frac < 1:
         df = df.groupby(["subset","is_member"]).apply(
             lambda x: x.sample(frac=frac, random_state=seed)).reset_index(drop=True)
+        print(f"  Sampled {frac:.0%} → {len(df)} rows")
     print(f"  Total: {len(df)} ({df.is_member.sum()} members)")
     return df
 
 def load_wikimia_data(lengths=[32,64,128,256]):
-    from datasets import load_dataset
+    from datasets import load_dataset, load_from_disk
+    kp = "/kaggle/input/datasets/minh2duy/poisoned-chalice-dataset/kaggle_wikimia"
     data = {}
     for L in lengths:
         try:
-            ds = load_dataset("swj0419/WikiMIA", split=f"WikiMIA_length{L}")
+            local_path = os.path.join(kp, f"WikiMIA_length{L}")
+            if os.path.exists(local_path):
+                ds = load_from_disk(local_path)
+            else:
+                ds = load_dataset("swj0419/WikiMIA", split=f"WikiMIA_length{L}")
             df = pd.DataFrame([{"text":r["input"],"is_member":int(r["label"]),"subset":f"len{L}"} for r in ds])
             data[f"len{L}"] = df
-            print(f"  WikiMIA len{L}: {len(df)}")
+            print(f"    WikiMIA len{L}: {len(df)}")
         except Exception as e:
-            print(f"  WikiMIA len{L}: ERR {e}")
+            print(f"    WikiMIA len{L}: ERR {e}")
     return data
 
 def load_mimir_data(domains):
     from datasets import load_dataset
+    kp = "/kaggle/input/datasets/minh2duy/poisoned-chalice-dataset/kaggle_mimir"
     data = {}
     for dom in domains:
         try:
-            ds = load_dataset("iamgroot42/mimir", dom, trust_remote_code=True)
+            local_dir = os.path.join(kp, dom)
             rows = []
-            for sp, lb in [("member",1),("nonmember",0)]:
-                if sp in ds:
-                    for r in ds[sp]:
-                        rows.append({"text":r.get("text",r.get("input","")),"is_member":lb,"subset":dom})
+            if os.path.exists(local_dir):
+                import json as _json
+                for fname, label in [("member.jsonl", 1), ("nonmember.jsonl", 0)]:
+                    fpath = os.path.join(local_dir, fname)
+                    if os.path.exists(fpath):
+                        with open(fpath, "r", encoding="utf-8") as f:
+                            for line in f:
+                                text = line.strip()
+                                if text:
+                                    rows.append({"text": text, "is_member": label, "subset": dom})
+            else:
+                ds = load_dataset("iamgroot42/mimir", dom)
+                for sp, lb in [("member",1),("nonmember",0)]:
+                    if sp in ds:
+                        for r in ds[sp]:
+                            rows.append({"text":r.get("text",r.get("input","")),"is_member":lb,"subset":dom})
             if rows:
                 data[dom] = pd.DataFrame(rows)
-                print(f"  MIMIR {dom}: {len(data[dom])}")
+                print(f"    MIMIR {dom}: {len(data[dom])}")
         except Exception as e:
             print(f"  MIMIR {dom}: ERR {e}")
     return data
@@ -399,9 +439,29 @@ if __name__ == "__main__":
     np.random.seed(CONFIG["seed"])
     torch.manual_seed(CONFIG["seed"])
 
-    # ── 1. Poisoned Chalice ──
+    # ── 1. WikiMIA ──
+    if CONFIG["run_wikimia"]:
+        print("\n" + "█"*60 + "\n  [1/3] WIKIMIA\n" + "█"*60)
+        model, tok = load_model(CONFIG["wikimia_model"])
+        wdata = load_wikimia_data(CONFIG["wikimia_lengths"])
+        for k, wdf in wdata.items():
+            run_benchmark(model, tok, wdf, f"WikiMIA_{k}",
+                          CONFIG["max_length"], do_calibrate=False)
+        del model, tok; gc.collect(); torch.cuda.empty_cache()
+
+    # ── 2. MIMIR ──
+    if CONFIG["run_mimir"]:
+        print("\n" + "█"*60 + "\n  [2/3] MIMIR\n" + "█"*60)
+        model, tok = load_model(CONFIG["mimir_model"])
+        mdata = load_mimir_data(CONFIG["mimir_domains"])
+        for k, mdf in mdata.items():
+            run_benchmark(model, tok, mdf, f"MIMIR_{k}",
+                          CONFIG["max_length"], do_calibrate=False)
+        del model, tok; gc.collect(); torch.cuda.empty_cache()
+
+    # ── 3. Poisoned Chalice (LAST — competition target) ──
     if CONFIG["run_poisoned_chalice"]:
-        print("\n" + "█"*60 + "\n  POISONED CHALICE\n" + "█"*60)
+        print("\n" + "█"*60 + "\n  [3/3] POISONED CHALICE (test split)\n" + "█"*60)
         model, tok = load_model(CONFIG["model_name"])
         df_pc = load_pc_data(CONFIG["split"], CONFIG["sample_fraction"], CONFIG["seed"])
         df_pc, res_pc = run_benchmark(model, tok, df_pc, "PoisonedChalice",
@@ -421,26 +481,6 @@ if __name__ == "__main__":
             f.write(table)
         print(f"\n  LaTeX table → {odir}/latex_table_pc.tex")
 
-        del model, tok; gc.collect(); torch.cuda.empty_cache()
-
-    # ── 2. WikiMIA ──
-    if CONFIG["run_wikimia"]:
-        print("\n" + "█"*60 + "\n  WIKIMIA\n" + "█"*60)
-        model, tok = load_model(CONFIG["wikimia_model"])
-        wdata = load_wikimia_data(CONFIG["wikimia_lengths"])
-        for k, wdf in wdata.items():
-            run_benchmark(model, tok, wdf, f"WikiMIA_{k}",
-                          CONFIG["max_length"], do_calibrate=False)
-        del model, tok; gc.collect(); torch.cuda.empty_cache()
-
-    # ── 3. MIMIR ──
-    if CONFIG["run_mimir"]:
-        print("\n" + "█"*60 + "\n  MIMIR\n" + "█"*60)
-        model, tok = load_model(CONFIG["mimir_model"])
-        mdata = load_mimir_data(CONFIG["mimir_domains"])
-        for k, mdf in mdata.items():
-            run_benchmark(model, tok, mdf, f"MIMIR_{k}",
-                          CONFIG["max_length"], do_calibrate=False)
         del model, tok; gc.collect(); torch.cuda.empty_cache()
 
     print("\n" + "═"*60 + "\n  ALL DONE — ESP-Cal\n" + "═"*60)
