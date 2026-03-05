@@ -41,15 +41,27 @@ subprocess.run([sys.executable, "-m", "pip", "install", "-q",
                 "scikit-learn", "scipy", "huggingface_hub", "pyarrow"],
                capture_output=True)
 
-# HuggingFace auth
+# HuggingFace auth — try HF_TOKEN first, then posioned
 try:
     from kaggle_secrets import UserSecretsClient
     from huggingface_hub import login
-    token = UserSecretsClient().get_secret("posioned")
-    login(token=token, add_to_git_credential=True)
-    print("✓ HuggingFace authenticated")
-except Exception:
-    print("○ No HF secret found")
+    user_secrets = UserSecretsClient()
+    token = None
+    for secret_name in ["HF_TOKEN", "posioned"]:
+        try:
+            token = user_secrets.get_secret(secret_name)
+            if token:
+                print(f"✓ Found secret: {secret_name}")
+                break
+        except Exception:
+            continue
+    if token:
+        login(token=token, add_to_git_credential=True)
+        print("✓ HuggingFace authenticated")
+    else:
+        print("⚠ No HF token found in secrets")
+except Exception as e:
+    print(f"○ Kaggle secrets unavailable: {e}")
 
 # Add experiment dir to path
 EXP_DIR = os.path.join(REPO_DIR, "Paper2_LogitOnlyBaseline", "experiments")
