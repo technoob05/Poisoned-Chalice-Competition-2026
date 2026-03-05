@@ -53,7 +53,7 @@ def test_gpu():
     print("\n[2/5] Testing GPU...")
     if torch.cuda.is_available():
         name = torch.cuda.get_device_name(0)
-        vram = torch.cuda.get_device_properties(0).total_mem / 1e9
+        vram = torch.cuda.get_device_properties(0).total_memory / 1e9
         print(f"  ✓ GPU: {name} ({vram:.0f} GB)")
     else:
         print(f"  ⚠ No CUDA GPU — will run on CPU (slow)")
