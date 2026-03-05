@@ -32,7 +32,7 @@ except Exception:
 import gc
 import pandas as pd
 import torch
-from espcal import Config, ESPCalExperiment
+from core import Config, ESPCalExperiment
 
 
 def main():

@@ -1,162 +1,162 @@
 #!/usr/bin/env python3
 """
-ESP-Cal — Quick Smoke Test
-===========================
-Runs a minimal test (3 samples, smallest model) to verify everything works.
+run_test.py — Quick-Test Orchestrator (10 % data, all experiments)
+===================================================================
+Runs every exp_XX_*/run.py with --frac 0.10 so you can validate each
+technique quickly before committing to a full run.
 
-Usage:
-    python run_test.py
+Workflow
+--------
+  1. python run_test.py              → run ALL experiments at 10 %
+  2. Inspect results/ — if AUC > 0.55 for at least one exp, proceed
+  3. python run_test.py --full       → promote ALL to 100 %
+  4. Or cherry-pick:  cd exp_02_ESPCal && python run.py --full
+
+Usage
+-----
+  python run_test.py                 # all exps, 10%
+  python run_test.py --exps 02 04    # only exp_02 and exp_04
+  python run_test.py --full          # all exps, 100%
+  python run_test.py --frac 0.3      # all exps, 30%
 """
 
 import os
 import sys
 import subprocess
 import time
+import argparse
 
-subprocess.run([sys.executable, "-m", "pip", "install", "-q",
-                "transformers", "accelerate", "datasets",
-                "scikit-learn", "scipy", "huggingface_hub", "pyarrow"],
-               capture_output=True)
+_EXPS_DIR = os.path.dirname(os.path.abspath(__file__))
 
-try:
-    from kaggle_secrets import UserSecretsClient
-    from huggingface_hub import login
-    token = UserSecretsClient().get_secret("posioned")
-    login(token=token, add_to_git_credential=True)
-    print("✓ HuggingFace authenticated")
-except Exception:
-    print("○ Using local auth")
-
-import torch
-import numpy as np
+# ── All registered experiments (order matters: baseline first) ─────────────
+EXPERIMENTS = [
+    "exp_00_Baseline",
+    "exp_01_ESP_NoCal",
+    "exp_02_ESPCal",
+    "exp_03_SurpriseTraj",
+    "exp_04_Combined",
+]
 
 
-def test_imports():
-    print("\n[1/5] Testing imports...")
-    from espcal import (
-        Config, ESPCalExperiment,
-        load_model, free_model,
-        ESPExtractor, MultiScaleCalibrator,
-        load_poisoned_chalice, load_wikimia, load_mimir, load_bookmia,
-        evaluate_scores,
-        BaselineComparison,
-        WIKIMIA_MODELS, MIMIR_MODELS, BOOKMIA_MODELS,
-    )
-    print(f"  ✓ All imports OK")
-    print(f"  ✓ WikiMIA models: {len(WIKIMIA_MODELS)}")
-    print(f"  ✓ MIMIR models:   {len(MIMIR_MODELS)}")
-    print(f"  ✓ BookMIA models:  {len(BOOKMIA_MODELS)}")
-    return Config
+def parse_args():
+    p = argparse.ArgumentParser(description="Quick-test all experiments")
+    p.add_argument("--full",  action="store_true",
+                   help="Run at 100%% (production mode)")
+    p.add_argument("--frac",  type=float, default=0.10,
+                   help="Data fraction (default 0.10 = 10%%)")
+    p.add_argument("--exps",  nargs="*", default=None,
+                   help="Filter by experiment number(s), e.g. --exps 02 04")
+    p.add_argument("--split", default="test", choices=["train", "test"])
+    p.add_argument("--model", default=None,
+                   help="Override model for all experiments")
+    return p.parse_args()
 
 
-def test_gpu():
-    print("\n[2/5] Testing GPU...")
-    if torch.cuda.is_available():
-        name = torch.cuda.get_device_name(0)
-        vram = torch.cuda.get_device_properties(0).total_memory / 1e9
-        print(f"  ✓ GPU: {name} ({vram:.0f} GB)")
-    else:
-        print(f"  ⚠ No CUDA GPU — will run on CPU (slow)")
+def run_experiment(exp_name: str, frac: float, split: str, model: str = None) -> bool:
+    run_py = os.path.join(_EXPS_DIR, exp_name, "run.py")
+    if not os.path.exists(run_py):
+        print(f"  ✗ {exp_name}: run.py not found — skipping")
+        return False
 
+    cmd = [sys.executable, run_py, "--frac", str(frac), "--split", split]
+    if frac >= 1.0:
+        cmd = [sys.executable, run_py, "--full", "--split", split]
+    if model:
+        cmd += ["--model", model]
 
-def test_model_load(cfg):
-    print("\n[3/5] Testing model loading (pythia-160m)...")
-    from espcal import load_model, free_model
-
+    print(f"\n{'▶'*3} {exp_name}  (frac={frac:.0%}  split={split})")
+    print("  cmd: " + " ".join(cmd))
     t0 = time.time()
-    model, tokenizer = load_model("EleutherAI/pythia-160m-deduped", cfg.torch_dtype)
-    print(f"  ✓ Loaded in {time.time()-t0:.1f}s")
-
-    inputs = tokenizer("Hello world, this is a test.", return_tensors="pt",
-                       truncation=True, max_length=32)
-    device = next(model.parameters()).device
-    input_ids = inputs["input_ids"].to(device)
-    with torch.no_grad():
-        outputs = model(input_ids=input_ids)
-    print(f"  ✓ Forward pass OK: logits {outputs.logits.shape}")
-
-    free_model(model, tokenizer)
-    return True
+    result = subprocess.run(cmd, cwd=os.path.join(_EXPS_DIR, exp_name))
+    elapsed = time.time() - t0
+    ok = result.returncode == 0
+    status = "✓ OK" if ok else f"✗ FAILED (code {result.returncode})"
+    print(f"  [{status}]  {elapsed:.0f}s")
+    return ok
 
 
-def test_extractor(cfg):
-    print("\n[4/5] Testing ESP extractor...")
-    from espcal import load_model, free_model, ESPExtractor
-
-    model, tokenizer = load_model("EleutherAI/pythia-160m-deduped", cfg.torch_dtype)
-    extractor = ESPExtractor(model, tokenizer, cfg)
-
-    test_texts = [
-        "def hello():\n    print('Hello, world!')\n",
-        "The quick brown fox jumps over the lazy dog.",
-        "import numpy as np\ndef compute(x):\n    return np.sum(x ** 2)\n",
-    ]
-
-    for i, text in enumerate(test_texts):
-        t0 = time.time()
-        features = extractor.extract(text)
-        elapsed = time.time() - t0
-        print(f"  Sample {i+1}: {len(features)} features in {elapsed:.2f}s")
-        print(f"    esp_slope={features['esp_slope']:.6f}")
-        print(f"    signal_esp={features['signal_esp']:.6f}")
-        print(f"    signal_loss={features['signal_loss']:.4f}")
-        print(f"    h_drop={features['h_drop']:.4f}")
-        print(f"    minkprob_20={features['minkprob_20']:.4f}")
-
-    free_model(model, tokenizer, extractor)
-    return True
-
-
-def test_data_loading(cfg):
-    print("\n[5/5] Testing data loading...")
-
+def check_imports():
+    """Verify core/ package is importable."""
     try:
-        from espcal import load_poisoned_chalice
-        cfg_test = type(cfg)()
-        cfg_test.sample_fraction = 0.01
-        df = load_poisoned_chalice(cfg_test)
-        if len(df) > 0:
-            print(f"  ✓ Poisoned Chalice: {len(df)} samples")
+        sys.path.insert(0, _EXPS_DIR)
+        from core import Config, ESPExtractor, WIKIMIA_MODELS, MIMIR_MODELS
+        print(f"  ✓ core package OK")
+        print(f"    WikiMIA models registered: {len(WIKIMIA_MODELS)}")
+        print(f"    MIMIR  models registered:  {len(MIMIR_MODELS)}")
+        return True
+    except Exception as e:
+        print(f"  ✗ core import failed: {e}")
+        return False
+
+
+def check_gpu():
+    try:
+        import torch
+        if torch.cuda.is_available():
+            name = torch.cuda.get_device_name(0)
+            vram = torch.cuda.get_device_properties(0).total_memory / 1e9
+            print(f"  ✓ GPU: {name}  ({vram:.0f} GB VRAM)")
         else:
-            print(f"  ⚠ Poisoned Chalice: empty (might need Kaggle dataset)")
-    except Exception as e:
-        print(f"  ⚠ Poisoned Chalice: {e}")
-
-    try:
-        from espcal import load_wikimia
-        cfg_test = type(cfg)()
-        cfg_test.wikimia_lengths = [32]
-        data = load_wikimia(cfg_test)
-        for k, df in data.items():
-            print(f"  ✓ WikiMIA {k}: {len(df)} samples")
-    except Exception as e:
-        print(f"  ⚠ WikiMIA: {e}")
-
-    return True
+            print("  ⚠ No CUDA GPU — will use CPU (much slower)")
+    except Exception:
+        print("  ⚠ Could not check GPU")
 
 
 def main():
+    args = parse_args()
+    frac = 1.0 if args.full else args.frac
+
+    # Filter experiments if --exps given
+    exps = EXPERIMENTS
+    if args.exps:
+        exps = [e for e in EXPERIMENTS if any(e.startswith(f"exp_{n}") for n in args.exps)]
+        if not exps:
+            print(f"  ✗ No experiments matched: {args.exps}")
+            sys.exit(1)
+
+    mode_tag = "FULL (100%)" if frac >= 1.0 else f"QUICK-TEST ({frac:.0%})"
     print("=" * 60)
-    print("  ESP-Cal — SMOKE TEST")
+    print(f"  Paper 2 — Experiment Orchestrator  [{mode_tag}]")
+    print(f"  Experiments : {len(exps)}")
+    print(f"  Split       : {args.split}")
+    if args.model:
+        print(f"  Model override: {args.model}")
     print("=" * 60)
 
-    t_start = time.time()
+    # Pre-flight: check imports + GPU
+    print("\n[pre-flight]")
+    check_imports()
+    check_gpu()
 
-    Config = test_imports()
-    cfg = Config()
-    cfg.output_dir = "./results_test"
-    os.makedirs(cfg.output_dir, exist_ok=True)
+    t_total = time.time()
+    passed, failed = [], []
 
-    test_gpu()
-    test_model_load(cfg)
-    test_extractor(cfg)
-    test_data_loading(cfg)
+    for exp in exps:
+        ok = run_experiment(exp, frac, args.split, args.model)
+        (passed if ok else failed).append(exp)
 
+    elapsed = time.time() - t_total
     print("\n" + "═" * 60)
-    print(f"  ✓ ALL TESTS PASSED in {time.time()-t_start:.1f}s")
+    print(f"  SUMMARY  ({elapsed:.0f}s total)")
     print("═" * 60)
-    print("\n  Ready to run: python run_all.py")
+    for e in passed:
+        print(f"  ✓  {e}")
+    for e in failed:
+        print(f"  ✗  {e}  ← FAILED")
+
+    if failed:
+        print(f"\n  {len(failed)} experiment(s) failed.")
+        sys.exit(1)
+    else:
+        if frac < 1.0:
+            print(f"\n  All quick-tests passed!")
+            print(f"  Next step: python run_test.py --full")
+            print(f"  Or cherry-pick: cd exp_02_ESPCal && python run.py --full")
+        else:
+            print(f"\n  All production runs complete.")
+            print(f"  Results in: Paper2_LogitOnlyBaseline/results/")
 
 
 if __name__ == "__main__":
     main()
+
