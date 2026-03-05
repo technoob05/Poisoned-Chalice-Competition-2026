@@ -37,7 +37,7 @@ class ESPCalExperiment:
         extractor = ESPExtractor(model, tokenizer, self.cfg)
         df = load_poisoned_chalice(self.cfg)
         result = self._extract_and_evaluate(df, extractor, "PoisonedChalice", do_ablation=True)
-        free_model(model, tokenizer, extractor)
+        free_model(model, tokenizer, extractor, model_name=self.cfg.model_name)
         return result
 
     # ── WikiMIA (multi-model) ──
@@ -62,7 +62,7 @@ class ESPCalExperiment:
                     all_results[tag] = self._extract_and_evaluate(
                         df.copy(), extractor, tag, calibrate=False
                     )
-                free_model(model, tokenizer, extractor)
+                free_model(model, tokenizer, extractor, model_name=model_name)
             except Exception as e:
                 print(f"  ✗ {model_name}: {e}")
         return all_results
@@ -89,7 +89,7 @@ class ESPCalExperiment:
                     all_results[tag] = self._extract_and_evaluate(
                         df.copy(), extractor, tag, calibrate=False
                     )
-                free_model(model, tokenizer, extractor)
+                free_model(model, tokenizer, extractor, model_name=model_name)
             except Exception as e:
                 print(f"  ✗ {model_name}: {e}")
         return all_results
@@ -116,7 +116,7 @@ class ESPCalExperiment:
                 all_results[tag] = self._extract_and_evaluate(
                     df_base.copy(), extractor, tag, calibrate=False
                 )
-                free_model(model, tokenizer, extractor)
+                free_model(model, tokenizer, extractor, model_name=model_name)
             except Exception as e:
                 print(f"  ✗ {model_name}: {e}")
         return all_results

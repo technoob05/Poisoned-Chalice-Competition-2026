@@ -41,7 +41,7 @@ class MultiGeoExperiment:
         extractor = MultiGeoExtractor(model, tokenizer, n_layers, self.cfg)
         df = load_poisoned_chalice(self.cfg)
         result = self._extract_and_evaluate(df, extractor, "PoisonedChalice")
-        free_model(model, tokenizer, extractor)
+        free_model(model, tokenizer, extractor, model_name=self.cfg.model_name)
         return result
 
     # ────────────────────────────────────────
@@ -66,7 +66,7 @@ class MultiGeoExperiment:
                     tag = f"WikiMIA_{lk}_{short}"
                     print(f"\n  ── {tag} ──")
                     all_results[tag] = self._extract_and_evaluate(df.copy(), extractor, tag, znorm=False)
-                free_model(model, tokenizer, extractor)
+                free_model(model, tokenizer, extractor, model_name=model_name)
             except Exception as e:
                 print(f"  ✗ {model_name}: {e}")
         return all_results
@@ -93,7 +93,7 @@ class MultiGeoExperiment:
                     tag = f"MIMIR_{domain}_{short}"
                     print(f"\n  ── {tag} ──")
                     all_results[tag] = self._extract_and_evaluate(df.copy(), extractor, tag, znorm=False)
-                free_model(model, tokenizer, extractor)
+                free_model(model, tokenizer, extractor, model_name=model_name)
             except Exception as e:
                 print(f"  ✗ {model_name}: {e}")
         return all_results
@@ -120,7 +120,7 @@ class MultiGeoExperiment:
                 extractor = MultiGeoExtractor(model, tokenizer, n_layers, self.cfg)
                 tag = f"BookMIA_{short}"
                 all_results[tag] = self._extract_and_evaluate(df_base.copy(), extractor, tag, znorm=False)
-                free_model(model, tokenizer, extractor)
+                free_model(model, tokenizer, extractor, model_name=model_name)
             except Exception as e:
                 print(f"  ✗ {model_name}: {e}")
         return all_results
