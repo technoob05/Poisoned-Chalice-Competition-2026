@@ -26,7 +26,7 @@ def load_poisoned_chalice(cfg: Config) -> pd.DataFrame:
             for row in ds:
                 all_rows.append({
                     "text": row["content"],
-                    "is_member": int(row["membership"]),
+                    "is_member": 1 if row["membership"] == "member" else 0,
                     "subset": lang,
                 })
             print(f"    {lang}: {len(ds)} samples")
