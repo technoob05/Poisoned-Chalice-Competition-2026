@@ -37,7 +37,8 @@ class ESPCalExperiment:
         extractor = ESPExtractor(model, tokenizer, self.cfg)
         df = load_poisoned_chalice(self.cfg)
         result = self._extract_and_evaluate(df, extractor, "PoisonedChalice", do_ablation=True)
-        free_model(model, tokenizer, extractor, model_name=self.cfg.model_name)
+        del model, tokenizer, extractor
+        free_model(model_name=self.cfg.model_name)
         return result
 
     # ── WikiMIA (multi-model) ──
@@ -53,6 +54,7 @@ class ESPCalExperiment:
         for model_name in models:
             short = model_name.split("/")[-1]
             print(f"\n  ╔══ Model: {model_name} ══╗")
+            model = tokenizer = extractor = None
             try:
                 model, tokenizer = load_model(model_name, self.cfg.torch_dtype)
                 extractor = ESPExtractor(model, tokenizer, self.cfg)
@@ -62,9 +64,11 @@ class ESPCalExperiment:
                     all_results[tag] = self._extract_and_evaluate(
                         df.copy(), extractor, tag, calibrate=False
                     )
-                free_model(model, tokenizer, extractor, model_name=model_name)
             except Exception as e:
                 print(f"  ✗ {model_name}: {e}")
+            finally:
+                del model, tokenizer, extractor
+                free_model(model_name=model_name)
         return all_results
 
     # ── MIMIR (multi-model) ──
@@ -80,6 +84,7 @@ class ESPCalExperiment:
         for model_name in models:
             short = model_name.split("/")[-1]
             print(f"\n  ╔══ Model: {model_name} ══╗")
+            model = tokenizer = extractor = None
             try:
                 model, tokenizer = load_model(model_name, self.cfg.torch_dtype)
                 extractor = ESPExtractor(model, tokenizer, self.cfg)
@@ -89,9 +94,11 @@ class ESPCalExperiment:
                     all_results[tag] = self._extract_and_evaluate(
                         df.copy(), extractor, tag, calibrate=False
                     )
-                free_model(model, tokenizer, extractor, model_name=model_name)
             except Exception as e:
                 print(f"  ✗ {model_name}: {e}")
+            finally:
+                del model, tokenizer, extractor
+                free_model(model_name=model_name)
         return all_results
 
     # ── BookMIA (multi-model) ──
@@ -109,6 +116,7 @@ class ESPCalExperiment:
         for model_name in models:
             short = model_name.split("/")[-1]
             print(f"\n  ╔══ Model: {model_name} ══╗")
+            model = tokenizer = extractor = None
             try:
                 model, tokenizer = load_model(model_name, self.cfg.torch_dtype)
                 extractor = ESPExtractor(model, tokenizer, self.cfg)
@@ -116,9 +124,11 @@ class ESPCalExperiment:
                 all_results[tag] = self._extract_and_evaluate(
                     df_base.copy(), extractor, tag, calibrate=False
                 )
-                free_model(model, tokenizer, extractor, model_name=model_name)
             except Exception as e:
                 print(f"  ✗ {model_name}: {e}")
+            finally:
+                del model, tokenizer, extractor
+                free_model(model_name=model_name)
         return all_results
 
     # ── Core extraction + evaluation ──
@@ -146,6 +156,7 @@ class ESPCalExperiment:
         print(f"  ✓ Done in {elapsed:.1f}s ({len(df)/elapsed:.1f} s/s)")
 
         calibration_cols = [c for c in ["signal_esp", "signal_h_drop", "signal_loss",
+                            "signal_surprise_drop", "surprise_drop",
                             "neg_mean_loss", "minkprob_20", "surp"] if c in df.columns]
 
         if calibrate:
