@@ -33,7 +33,9 @@ if not os.path.exists(REPO_DIR):
     subprocess.run(["git", "clone", REPO_URL, REPO_DIR], check=True)
     print(f"✓ Cloned to {REPO_DIR}")
 else:
-    print(f"✓ Repo already exists at {REPO_DIR}")
+    print("Updating repository...")
+    subprocess.run(["git", "-C", REPO_DIR, "pull", "--ff-only"], capture_output=True)
+    print(f"✓ Repo updated at {REPO_DIR}")
 
 # Install dependencies
 subprocess.run([sys.executable, "-m", "pip", "install", "-q",
