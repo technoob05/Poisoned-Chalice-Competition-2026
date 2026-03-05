@@ -140,7 +140,11 @@ class MultiGeoExperiment:
                 rate = idx / elapsed
                 eta = (len(df) - idx) / rate
                 print(f"    [{idx}/{len(df)}] {rate:.1f} s/s, ETA {eta:.0f}s")
-            features_list.append(extractor.extract(row["text"]))
+            text = row.get("text") or ""
+            if not text or not text.strip():
+                features_list.append(extractor._empty_features())
+                continue
+            features_list.append(extractor.extract(text))
 
         features_df = pd.DataFrame(features_list)
         df = pd.concat([df.reset_index(drop=True), features_df], axis=1)

@@ -24,12 +24,15 @@ def load_poisoned_chalice(cfg: Config) -> pd.DataFrame:
             else:
                 ds = load_dataset(cfg.dataset_name, lang, split=cfg.split)
             for row in ds:
+                text = row.get("content") or ""
+                if not text or not text.strip():
+                    continue
                 all_rows.append({
-                    "text": row["content"],
+                    "text": text,
                     "is_member": 1 if row["membership"] == "member" else 0,
                     "subset": lang,
                 })
-            print(f"    {lang}: {len(ds)} samples")
+            print(f"    {lang}: {len(ds)} samples (kept {sum(1 for r in all_rows if r['subset']==lang)})")
         except Exception as e:
             print(f"    {lang}: ERROR — {e}")
 

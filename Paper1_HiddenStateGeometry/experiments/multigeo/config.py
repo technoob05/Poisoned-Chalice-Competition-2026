@@ -71,7 +71,7 @@ class Config:
     dataset_name: str = "AISE-TUDelft/Poisoned-Chalice"
     languages: List[str] = field(default_factory=lambda: ["Go", "Java", "Python", "Ruby", "Rust"])
     sample_fraction: float = 1.0
-    split: str = "train"
+    split: str = "test"
 
     # ── MultiGeo axes ──
     magnitude_layers: str = "mid"

@@ -145,7 +145,7 @@ import gc
 cfg = Config()
 cfg.output_dir = "/kaggle/working/results_espcal"
 cfg.multi_model = True  # Run ALL models
-cfg.split = "train"     # "train" for development, "test" for final submission
+# cfg.split defaults to "test" — only test set for Poisoned Chalice
 
 os.makedirs(cfg.output_dir, exist_ok=True)
 
@@ -157,38 +157,38 @@ print("=" * 60)
 
 exp = ESPCalExperiment(cfg)
 
-# ── 1. Poisoned Chalice ──
+# ── 1. WikiMIA ──
 print("\n\n" + "█" * 60)
-print("  [1/4] POISONED CHALICE")
-print("█" * 60)
-pc_results = exp.run_poisoned_chalice()
-
-gc.collect()
-torch.cuda.empty_cache()
-
-# ── 2. WikiMIA ──
-print("\n\n" + "█" * 60)
-print("  [2/4] WIKIMIA — 19 models × 4 lengths")
+print("  [1/4] WIKIMIA — 19 models × 4 lengths")
 print("█" * 60)
 wikimia_results = exp.run_wikimia()
 
 gc.collect()
 torch.cuda.empty_cache()
 
-# ── 3. MIMIR ──
+# ── 2. MIMIR ──
 print("\n\n" + "█" * 60)
-print("  [3/4] MIMIR — 10 models × 7 domains")
+print("  [2/4] MIMIR — 10 models × 7 domains")
 print("█" * 60)
 mimir_results = exp.run_mimir()
 
 gc.collect()
 torch.cuda.empty_cache()
 
-# ── 4. BookMIA ──
+# ── 3. BookMIA ──
 print("\n\n" + "█" * 60)
-print("  [4/4] BOOKMIA — 7 models")
+print("  [3/4] BOOKMIA — 7 models")
 print("█" * 60)
 bookmia_results = exp.run_bookmia()
+
+gc.collect()
+torch.cuda.empty_cache()
+
+# ── 4. Poisoned Chalice (Competition — TEST only) ──
+print("\n\n" + "█" * 60)
+print("  [4/4] POISONED CHALICE (test split)")
+print("█" * 60)
+pc_results = exp.run_poisoned_chalice()
 
 # ═══════════════════════════════════════════
 # Cell 5: Ablation — 3-Scale Contribution
